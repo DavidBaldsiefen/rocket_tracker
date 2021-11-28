@@ -1,0 +1,11 @@
+<launch>
+    
+    #Starting main node
+    <node 
+        pkg="core" 
+        type="frame_grabber_node" 
+        name="FRAMEGRABBER"
+        required="true" 
+        output="screen"/>
+        
+</launch>

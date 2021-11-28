@@ -1,5 +1,7 @@
+#include <QThread>
 #include <QWidget>
-#include <core/ui_gui_form.h>
+#include <core/ui_evaluator_gui_form.h>
+#include <ros/ros.h>
 
 class Evaluator_GUI : public QWidget {
     Q_OBJECT

@@ -138,14 +138,12 @@ catkin_package(
 )
 
 if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")
-    qt5_wrap_cpp(core_MOCS include/evaluator_node.h)
-    qt5_wrap_ui(core_UIS_H src/gui_form.ui)
+    qt5_wrap_cpp(core_MOCS include/evaluator_gui.h)
+    qt5_wrap_ui(core_UIS_H src/evaluator_gui_form.ui)
 else()
-    qt4_wrap_cpp(core_MOCS include/evaluator_node.h)
-    qt4_wrap_ui(core_UIS_H src/gui_form.ui)
+    qt4_wrap_cpp(core_MOCS include/evaluator_gui.h)
+    qt4_wrap_ui(core_UIS_H src/evaluator_gui_form.ui)
 endif()
-
-#qt5_wrap_ui(src/evaluator_node.cpp src/gui_form.ui)
 
 ###########
 ## Build ##
@@ -168,7 +166,7 @@ include_directories(
 add_library(${PROJECT_NAME}
     #src/evaluator_node.cpp
     ${core_MOCS}
-    ${core_UIS_H}
+    #${core_UIS_H}
     )
 
 ## Add cmake target dependencies of the library

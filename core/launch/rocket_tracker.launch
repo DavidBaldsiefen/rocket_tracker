@@ -14,5 +14,12 @@
         type="image_processor_node" 
         name="IMAGEPROCESSOR"
         output="screen"/>
+
+    #Starting evaluator node
+    <node 
+        pkg="core" 
+        type="evaluator_node" 
+        name="EVALUATOR"
+        output="screen"/>
         
 </launch>

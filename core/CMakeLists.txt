@@ -13,12 +13,21 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   image_transport
   cv_bridge
+  rqt_gui
+  rqt_gui_cpp
 )
 
 find_package(OpenCV 4 REQUIRED)
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
+
+if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")
+  find_package(Qt5Widgets REQUIRED)
+else()
+  find_package(Qt4 COMPONENTS QtCore QtGui REQUIRED)
+  include(${QT_USE_FILE})
+endif()
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -123,10 +132,20 @@ endif()
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
 #  INCLUDE_DIRS include
-#  LIBRARIES core
-#  CATKIN_DEPENDS image_transport roscpp std_msgs
+   LIBRARIES ${PROJECT_NAME}
+   CATKIN_DEPENDS image_transport roscpp rqt_gui_cpp std_msgs
 #  DEPENDS system_lib
 )
+
+if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")
+    qt5_wrap_cpp(core_MOCS include/evaluator_node.h)
+    qt5_wrap_ui(core_UIS_H src/gui_form.ui)
+else()
+    qt4_wrap_cpp(core_MOCS include/evaluator_node.h)
+    qt4_wrap_ui(core_UIS_H src/gui_form.ui)
+endif()
+
+#qt5_wrap_ui(src/evaluator_node.cpp src/gui_form.ui)
 
 ###########
 ## Build ##
@@ -136,14 +155,21 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
   include
+  ${CMAKE_CURRENT_BINARY_DIR}/..
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${Qt5Widgets_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
 #   src/${PROJECT_NAME}/core.cpp
 # )
+add_library(${PROJECT_NAME}
+    #src/evaluator_node.cpp
+    ${core_MOCS}
+    ${core_UIS_H}
+    )
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -160,9 +186,17 @@ set(
   evaluator_node
 )
 
-foreach(NODE_NAME ${NODE_LIST})
+set(
+  REDUCED_NODE_LIST
+  frame_grabber_node
+  image_processor_node
+)
+
+foreach(NODE_NAME ${REDUCED_NODE_LIST})
   add_executable(${NODE_NAME} "src/${NODE_NAME}.cpp")
 endforeach()
+
+add_executable(evaluator_node "src/evaluator_node.cpp" ${core_MOCS} ${core_UIS_H})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -185,6 +219,13 @@ foreach(NODE_NAME ${NODE_LIST})
     ${OpenCV_LIBRARIES}
     ${TORCH_LIBRARIES}
   )
+
+  if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")
+    target_link_libraries(${NODE_NAME} Qt5::Widgets)
+  else()
+    target_link_libraries(${NODE_NAME} ${QT_QTCORE_LIBRARY} ${QT_QTGUI_LIBRARY})
+  endif()
+
   set_property(TARGET ${NODE_NAME} PROPERTY CXX_STANDARD 14)
 endforeach()
 

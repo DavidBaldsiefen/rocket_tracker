@@ -1,11 +1,18 @@
 <launch>
     
-    #Starting main node
+    #Starting framegrabber node
     <node 
         pkg="core" 
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
         required="true" 
+        output="screen"/>
+
+    #Starting image processor node
+    <node 
+        pkg="core" 
+        type="image_processor_node" 
+        name="IMAGEPROCESSOR"
         output="screen"/>
         
 </launch>

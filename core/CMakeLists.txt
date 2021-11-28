@@ -26,6 +26,21 @@ find_package(OpenCV 4 REQUIRED)
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
 # catkin_python_setup()
 
+#####################
+## Torch Libraries ##
+#####################
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
+set(Torch_DIR ../../libtorch/share/cmake/Torch)
+find_package(Torch PATHS ${Torch_DIR} NO_DEFAULT_PATH REQUIRED)
+if (Torch_FOUND)
+    message(STATUS "Torch library found!")
+    message(STATUS "    include path: ${TORCH_INCLUDE_DIRS}" \n)
+else ()
+    message(FATAL_ERROR "Could not locate Torch" \n)
+endif()
+
 ################################################
 ## Declare ROS messages, services and actions ##
 ################################################
@@ -168,9 +183,9 @@ foreach(NODE_NAME ${NODE_LIST})
   target_link_libraries(${NODE_NAME}
     ${catkin_LIBRARIES}
     ${OpenCV_LIBRARIES}
-    #${Boost_LOG_LIBRARY}
-    #${Boost_SYSTEM_LIBRARY}
+    ${TORCH_LIBRARIES}
   )
+  set_property(TARGET ${NODE_NAME} PROPERTY CXX_STANDARD 14)
 endforeach()
 
 #############

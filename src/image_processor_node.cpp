@@ -1,6 +1,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <opencv4/opencv2/opencv.hpp>
+#include <ros/package.h>
 #include <ros/ros.h>
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -10,12 +11,23 @@ static torch::Device torchDevice = torch::Device(torch::kCPU);
 
 bool init() {
 
+    if (torch::cuda::is_available()) {
+        torchDevice = torch::Device(torch::kCUDA);
+        ROS_INFO("Using CUDA Device for YOLOv5");
+    } else {
+        torchDevice = torch::Device(torch::kCPU);
+        ROS_INFO("Using CPU for YOLOv5");
+    }
+
     // TODO: Change weightfile path based on CUDA availability
     static const std::string WEIGHTFILE_PATH =
-        "/home/david/.ros/weightfiles/480px_cpu.torchscript.pt";
+        ros::package::getPath("rocket_tracker") + "/weights/480px" +
+        (torch::cuda::is_available() ? "_gpu" : "_cpu") + ".torchscript.pt";
+    "/home/david/.ros/weightfiles/480px_cpu.torchscript.pt";
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
         module = torch::jit::load(WEIGHTFILE_PATH);
+        module.to(torchDevice);
     } catch (const c10::Error &e) {
         ROS_ERROR("Could not load module from %s \n Error Messsage: %s", WEIGHTFILE_PATH.c_str(),
                   e.msg().c_str());
@@ -29,6 +41,8 @@ bool init() {
         module.to(torchDevice);
         ROS_INFO("Using CUDA Device for YOLOv5");
     } else {
+        torchDevice = torch::Device(torch::kCPU);
+        module.to(torchDevice);
         ROS_INFO("Using CPU for YOLOv5");
     }
 

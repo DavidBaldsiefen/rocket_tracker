@@ -2,7 +2,7 @@
     
     #Starting framegrabber node
     <node 
-        pkg="core" 
+        pkg="rocket_tracker" 
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
         required="true" 
@@ -10,14 +10,14 @@
 
     #Starting image processor node
     <node 
-        pkg="core" 
+        pkg="rocket_tracker" 
         type="image_processor_node" 
         name="IMAGEPROCESSOR"
         output="screen"/>
 
     #Starting evaluator node
     <node 
-        pkg="core" 
+        pkg="rocket_tracker" 
         type="evaluator_node" 
         name="EVALUATOR"
         output="screen"/>

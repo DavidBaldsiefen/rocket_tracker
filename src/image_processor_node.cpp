@@ -12,12 +12,13 @@ bool init() {
 
     // TODO: Change weightfile path based on CUDA availability
     static const std::string WEIGHTFILE_PATH =
-        "/home/david/.ros/weightfiles/yolov5s.torchscript.pt";
+        "/home/david/.ros/weightfiles/480px_cpu.torchscript.pt";
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
         module = torch::jit::load(WEIGHTFILE_PATH);
     } catch (const c10::Error &e) {
-        ROS_ERROR("Could not load module from %s", WEIGHTFILE_PATH.c_str());
+        ROS_ERROR("Could not load module from %s \n Error Messsage: %s", WEIGHTFILE_PATH.c_str(),
+                  e.msg().c_str());
         return false;
     }
 
@@ -116,7 +117,7 @@ void processImage(cv::UMat frame) {
     // Step 1: Rescale Image
 
     // Preparing input tensor
-    int width = 640, height = 640;
+    int width = 480, height = 480;
     cv::Mat img;
     cv::resize(frame, img, cv::Size(width, height)); // TODO: Configurable scaling
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
@@ -176,13 +177,14 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 }
 
 int main(int argc, char **argv) {
+
+    ros::init(argc, argv, "FRAMEGRABBER");
+    ros::NodeHandle nh("~");
+
     if (!init()) {
         ros::shutdown();
         return 0;
     }
-
-    ros::init(argc, argv, "FRAMEGRABBER");
-    ros::NodeHandle nh("~");
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);

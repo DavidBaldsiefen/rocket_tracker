@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5.1)
-project(core)
+project(rocket_tracker)
 
 ## Compile as C++14
 add_compile_options(-std=c++14)
@@ -41,7 +41,7 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
-set(Torch_DIR ../../libtorch/share/cmake/Torch)
+set(Torch_DIR ../libtorch/share/cmake/Torch)
 find_package(Torch PATHS ${Torch_DIR} NO_DEFAULT_PATH REQUIRED)
 if (Torch_FOUND)
     message(STATUS "Torch library found!")
@@ -138,11 +138,11 @@ catkin_package(
 )
 
 if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")
-    qt5_wrap_cpp(core_MOCS include/evaluator_gui.h)
-    qt5_wrap_ui(core_UIS_H src/evaluator_gui_form.ui)
+    qt5_wrap_cpp(rocket_tracker_MOCS include/evaluator_gui.h)
+    qt5_wrap_ui(rocket_tracker_UIS_H src/evaluator_gui_form.ui)
 else()
-    qt4_wrap_cpp(core_MOCS include/evaluator_gui.h)
-    qt4_wrap_ui(core_UIS_H src/evaluator_gui_form.ui)
+    qt4_wrap_cpp(rocket_tracker_MOCS include/evaluator_gui.h)
+    qt4_wrap_ui(rocket_tracker_UIS_H src/evaluator_gui_form.ui)
 endif()
 
 ###########
@@ -161,12 +161,12 @@ include_directories(
 
 ## Declare a C++ library
 # add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/core.cpp
+#   src/${PROJECT_NAME}/rocket_tracker.cpp
 # )
 add_library(${PROJECT_NAME}
     #src/evaluator_node.cpp
-    ${core_MOCS}
-    #${core_UIS_H}
+    ${rocket_tracker_MOCS}
+    #${rocket_tracker_UIS_H}
     )
 
 ## Add cmake target dependencies of the library
@@ -194,7 +194,7 @@ foreach(NODE_NAME ${REDUCED_NODE_LIST})
   add_executable(${NODE_NAME} "src/${NODE_NAME}.cpp")
 endforeach()
 
-add_executable(evaluator_node "src/evaluator_node.cpp" ${core_MOCS} ${core_UIS_H})
+add_executable(evaluator_node "src/evaluator_node.cpp" ${rocket_tracker_MOCS} ${rocket_tracker_UIS_H})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -274,7 +274,7 @@ endforeach()
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_core.cpp)
+# catkin_add_gtest(${PROJECT_NAME}-test test/test_rocket_tracker.cpp)
 # if(TARGET ${PROJECT_NAME}-test)
 #   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
 # endif()

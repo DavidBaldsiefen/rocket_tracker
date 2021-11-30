@@ -31,6 +31,16 @@ int main(int argc, char **argv) {
         ros::console::notifyLoggerLevelsChanged();
     }
 
+    // Get imagesize from arguments
+    int width = 480, height = 480;
+    if (argc == 2) {
+        width = std::stoi(argv[1]);
+    } else if (argc == 3) {
+        width = std::stoi(argv[1]);
+        height = std::stoi(argv[2]);
+    }
+    ROS_INFO("Video will be scaled to %dx%d", width, height);
+
     // Creating image-transport publisher for rqt
     image_transport::ImageTransport it(nh);
     // queuesize = fps * 2, so there is a 2 seconds buffer to publish
@@ -46,8 +56,6 @@ int main(int argc, char **argv) {
     }
 
     sensor_msgs::ImagePtr msg;
-
-    int width = 480, height = 480; // TODO: Configurable scaling
     cv::Mat videoFrame;
 
     // Main loop

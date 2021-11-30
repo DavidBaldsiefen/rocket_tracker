@@ -4,15 +4,18 @@
     <rosparam command="load" file="$(find rocket_tracker)/config/config.yaml" />
 
     #Launch arguments
-    <arg name="weights" default="$(find rocket_tracker)/weights/480px_cpu.torchscript.pt"/>
-    <arg name="usecuda" default="true"/>
+    <arg name="weights" default="$(find rocket_tracker)/weights/480px_cpu.torchscript.pt"/> # path to the weightfile
+    <arg name="usecuda" default="true"/> # force the image processor to use cuda/cpu
+    <arg name="imgw" default="480"/> # image-width for the weightfile
+    <arg name="imgh" default="480"/> # image-height for the weightfile
     
     #Starting framegrabber node
     <node 
         pkg="rocket_tracker" 
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
-        output="screen"/>
+        output="screen"
+	args="$(arg imgw) $(arg imgh)"/>
 
     #Starting image processor node
     <node 

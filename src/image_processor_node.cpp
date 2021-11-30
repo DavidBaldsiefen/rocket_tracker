@@ -12,9 +12,9 @@ static ros::Publisher detectionPublisher;
 static torch::jit::script::Module module;
 static torch::Device torchDevice = torch::Device(torch::kCPU);
 
-bool init() {
+bool init(std::string weightfilepath, bool usecuda) {
 
-    if (torch::cuda::is_available()) {
+    if (torch::cuda::is_available() && usecuda) {
         torchDevice = torch::Device(torch::kCUDA);
         ROS_INFO("Using CUDA Device for YOLOv5");
         ros::param::set("/rocket_tracker/using_cuda", true);
@@ -24,22 +24,17 @@ bool init() {
         ros::param::set("/rocket_tracker/using_cuda", false);
     }
 
-    // TODO: Change weightfile path based on CUDA availability
-    static const std::string WEIGHTFILE_PATH =
-        ros::package::getPath("rocket_tracker") + "/weights/480px" +
-        (torch::cuda::is_available() ? "_gpu" : "_cpu") + ".torchscript.pt";
-    "/home/david/.ros/weightfiles/480px_cpu.torchscript.pt";
     try {
         // Deserialize the ScriptModule from a file using torch::jit::load().
-        module = torch::jit::load(WEIGHTFILE_PATH);
+        module = torch::jit::load(weightfilepath);
         module.to(torchDevice);
     } catch (const c10::Error &e) {
-        ROS_ERROR("Could not load module from %s \n Error Messsage: %s", WEIGHTFILE_PATH.c_str(),
+        ROS_ERROR("Could not load module from %s \n Error Messsage: %s", weightfilepath.c_str(),
                   e.msg().c_str());
         return false;
     }
 
-    ROS_INFO("Model/weightfile loaded from %s", WEIGHTFILE_PATH.c_str());
+    ROS_INFO("Model/weightfile loaded from %s", weightfilepath.c_str());
     return true;
 }
 
@@ -194,7 +189,22 @@ int main(int argc, char **argv) {
     ros::init(argc, argv, "FRAMEGRABBER");
     ros::NodeHandle nh("~");
 
-    if (!init()) {
+    // Get weightfile path from arguments
+    std::string weightfilepath;
+    bool usecuda = true;
+    if (argc == 2) {
+        weightfilepath = argv[1];
+    } else if (argc == 3) {
+        weightfilepath = argv[1];
+        std::string arg2(argv[2]);
+        usecuda = !(arg2 == "false" || arg2 == "False" || arg2 == "0");
+    } else {
+        ROS_ERROR("No weightfile argument passed.");
+        ros::shutdown();
+        return 0;
+    }
+
+    if (!init(weightfilepath, usecuda)) {
         ros::shutdown();
         return 0;
     }

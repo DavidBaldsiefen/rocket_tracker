@@ -2,6 +2,10 @@
 
     #Load rosparams
     <rosparam command="load" file="$(find rocket_tracker)/config/config.yaml" />
+
+    #Launch arguments
+    <arg name="weights" default="$(find rocket_tracker)/weights/480px_cpu.torchscript.pt"/>
+    <arg name="usecuda" default="true"/>
     
     #Starting framegrabber node
     <node 
@@ -15,7 +19,8 @@
         pkg="rocket_tracker" 
         type="image_processor_node" 
         name="IMAGEPROCESSOR"
-        output="screen"/>
+        output="screen"
+        args="$(arg weights) $(arg usecuda)"/>
 
     #Starting evaluator node
     <node 

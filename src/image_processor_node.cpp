@@ -119,7 +119,7 @@ std::vector<torch::Tensor> non_max_suppression(torch::Tensor preds, float score_
     return output;
 }
 
-rocket_tracker::detectionMSG processImage(cv::UMat frame) {
+rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     rocket_tracker::detectionMSG result;
     result.top = 0.0;
@@ -133,9 +133,6 @@ rocket_tracker::detectionMSG processImage(cv::UMat frame) {
     // Step 1: Rescale Image
 
     // Preparing input tensor
-    int width = 480, height = 480;
-    cv::Mat img;
-    cv::resize(frame, img, cv::Size(width, height)); // TODO: Configurable scaling
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
     // Step 2:
@@ -186,10 +183,8 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     cv_bridge::CvImageConstPtr img = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
 
     if (!img->image.empty()) {
-        cv::UMat frame_umat = img->image.clone().getUMat(cv::ACCESS_RW); // TODO: Flag?
-
         // TODO: sync frame_ids to detected coordinates
-        detectionPublisher.publish(processImage(frame_umat));
+        detectionPublisher.publish(processImage(img->image));
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }

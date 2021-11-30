@@ -21,7 +21,7 @@ static rocket_tracker::detectionMSG receivedDetection;
 Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
     ui.setupUi(this);
 
-    ui.imageLabel->setFixedSize(QSize(480, 480));
+    ui.imageLabel->setMaximumSize(QSize(480, 480));
 
     QObject::connect(ui.pushButton, &QAbstractButton::pressed, this,
                      &Evaluator_GUI::on_pushButton_click);
@@ -30,20 +30,15 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
 void Evaluator_GUI::setImage(cv::Mat img) {
     if (!img.empty()) {
 
-        // resize
-        cv::Mat scaledImg;
-        cv::resize(img, scaledImg, cv::Size(480, 480));
-
         // draw detection
         if (receivedDetection.propability != 0.0) {
-            cv::rectangle(scaledImg, cv::Point2d(receivedDetection.right, receivedDetection.top),
+            cv::rectangle(img, cv::Point2d(receivedDetection.right, receivedDetection.top),
                           cv::Point2d(receivedDetection.left, receivedDetection.bottom),
                           cv::Scalar(0, 255, 0));
         }
 
-        ui.imageLabel->setPixmap(
-            QPixmap::fromImage(QImage(scaledImg.data, scaledImg.cols, scaledImg.rows,
-                                      scaledImg.step, QImage::Format_RGB888)));
+        ui.imageLabel->setPixmap(QPixmap::fromImage(
+            QImage(img.data, img.cols, img.rows, img.step, QImage::Format_RGB888)));
     }
 }
 

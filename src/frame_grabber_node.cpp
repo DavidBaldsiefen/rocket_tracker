@@ -51,6 +51,10 @@ int main(int argc, char **argv) {
             continue;
         }
 
+        // resize videoframe
+        int width = 480, height = 480; // TODO: Configurable scaling
+        cv::resize(videoFrame, videoFrame, cv::Size(width, height));
+
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         pubimg.publish(msg);
 
@@ -59,6 +63,7 @@ int main(int argc, char **argv) {
     }
 
     // Shut everything down cleanly
+    capture.release();
     ros::shutdown();
     pubimg.shutdown();
     nh.shutdown();

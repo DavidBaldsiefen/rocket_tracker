@@ -38,17 +38,6 @@ bool init() {
     }
 
     ROS_INFO("Model/weightfile loaded from %s", WEIGHTFILE_PATH.c_str());
-
-    if (torch::cuda::is_available()) {
-        torchDevice = torch::Device(torch::kCUDA);
-        module.to(torchDevice);
-        ROS_INFO("Using CUDA Device for YOLOv5");
-    } else {
-        torchDevice = torch::Device(torch::kCPU);
-        module.to(torchDevice);
-        ROS_INFO("Using CPU for YOLOv5");
-    }
-
     return true;
 }
 
@@ -178,10 +167,10 @@ rocket_tracker::detectionMSG processImage(cv::UMat frame) {
         }
 
         // Draw the highest scoring target
-        result.left = dets[0][mostLikelyTarget][0].item().toFloat() * frame.cols / width;
-        result.top = dets[0][mostLikelyTarget][1].item().toFloat() * frame.rows / height;
-        result.right = dets[0][mostLikelyTarget][2].item().toFloat() * frame.cols / width;
-        result.bottom = dets[0][mostLikelyTarget][3].item().toFloat() * frame.rows / height;
+        result.left = dets[0][mostLikelyTarget][0].item().toFloat();   // * frame.cols / width;
+        result.top = dets[0][mostLikelyTarget][1].item().toFloat();    // * frame.rows / height;
+        result.right = dets[0][mostLikelyTarget][2].item().toFloat();  // * frame.cols / width;
+        result.bottom = dets[0][mostLikelyTarget][3].item().toFloat(); // * frame.rows / height;
         result.classID = dets[0][mostLikelyTarget][5].item().toInt();
         result.propability = highestScore;
 

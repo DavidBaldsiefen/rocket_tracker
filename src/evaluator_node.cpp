@@ -7,6 +7,7 @@
 // Make IP publish detected object class, probability, coordinates, #of detected objects => custom
 // MSG
 // catch exceptions in imageprocessor
+// changing capture size instead of resizing
 
 #include "evaluator_gui.h"
 #include <image_transport/image_transport.h>

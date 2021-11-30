@@ -45,8 +45,10 @@ int main(int argc, char **argv) {
     while (ros::ok()) {
 
         if (!capture.read(videoFrame)) {
-            ROS_INFO("End of video reached - shutdown.");
-            break;
+            ROS_INFO("End of video reached - resetting to first frame.");
+            capture.set(cv::CAP_PROP_POS_FRAMES, 0);
+            ros::Duration(0.5).sleep();
+            continue;
         }
 
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();

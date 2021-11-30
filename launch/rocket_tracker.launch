@@ -1,11 +1,13 @@
 <launch>
+
+    #Load rosparams
+    <rosparam command="load" file="$(find rocket_tracker)/config/config.yaml" />
     
     #Starting framegrabber node
     <node 
         pkg="rocket_tracker" 
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
-        required="true" 
         output="screen"/>
 
     #Starting image processor node

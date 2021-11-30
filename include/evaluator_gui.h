@@ -19,7 +19,7 @@ class Evaluator_GUI : public QWidget {
     }
 
   private slots:
-    void on_pushButton_click();
+    void on_applyBtn();
 
   private:
     Ui_Form ui;

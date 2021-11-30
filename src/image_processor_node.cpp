@@ -17,9 +17,11 @@ bool init() {
     if (torch::cuda::is_available()) {
         torchDevice = torch::Device(torch::kCUDA);
         ROS_INFO("Using CUDA Device for YOLOv5");
+        ros::param::set("/rocket_tracker/using_cuda", true);
     } else {
         torchDevice = torch::Device(torch::kCPU);
         ROS_INFO("Using CPU for YOLOv5");
+        ros::param::set("/rocket_tracker/using_cuda", false);
     }
 
     // TODO: Change weightfile path based on CUDA availability
@@ -130,12 +132,9 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
     result.propability = 0.0;
     result.frameID = 0;
 
-    // Step 1: Rescale Image
-
     // Preparing input tensor
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
-    // Step 2:
     torch::Tensor imgTensor =
         torch::from_blob(img.data, {img.rows, img.cols, img.channels()}, torch::kByte)
             .to(torchDevice);
@@ -148,7 +147,7 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.4, 0.5, torchDevice);
 
-    // Step 3: Evaluate detected objects
+    // Evaluate detected objects
 
     if (dets.size() > 0) {
 
@@ -208,12 +207,7 @@ int main(int argc, char **argv) {
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
     // Main loop
-    ros::Rate r(140.0); // TODO: Set loop rate
-    while (ros::ok()) {
-
-        ros::spinOnce();
-        r.sleep();
-    }
+    ros::spin();
 
     // Shut everything down cleanly
     ros::shutdown();

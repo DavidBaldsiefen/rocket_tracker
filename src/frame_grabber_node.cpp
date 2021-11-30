@@ -3,32 +3,33 @@
 #include <opencv4/opencv2/opencv.hpp>
 #include <ros/ros.h>
 
-cv::VideoCapture capture;
+static cv::VideoCapture capture;
 
-bool init() {
-    // Set Log-level
-    if (ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug)) {
-        ros::console::notifyLoggerLevelsChanged();
-    }
+bool initCapture(std::string videopath) {
 
     // Open video file
-    capture = cv::VideoCapture("/home/david/Downloads/silent_launches.mp4");
+    ROS_INFO("Loading video from %s", videopath.c_str());
+    capture = cv::VideoCapture(videopath);
     if (!capture.isOpened()) {
         capture.release();
         ROS_ERROR("Failed to open capture!");
         return false;
     }
-
+    // "publish" the video specs
+    ros::param::set("/rocket_tracker/input_fps", capture.get(cv::CAP_PROP_FPS));
+    ros::param::set("/rocket_tracker/input_width", capture.get(cv::CAP_PROP_FRAME_WIDTH));
+    ros::param::set("/rocket_tracker/input_height", capture.get(cv::CAP_PROP_FRAME_HEIGHT));
     return true;
 }
 
 int main(int argc, char **argv) {
-    if (!init()) {
-        return 0;
-    }
-
     ros::init(argc, argv, "FRAMEGRABBER");
     ros::NodeHandle nh("~");
+
+    // Set Log-level
+    if (ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug)) {
+        ros::console::notifyLoggerLevelsChanged();
+    }
 
     // Creating image-transport publisher for rqt
     image_transport::ImageTransport it(nh);
@@ -36,12 +37,23 @@ int main(int argc, char **argv) {
     image_transport::Publisher pubimg =
         it.advertise("/image_topic", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
 
+    // Open video capture
+    std::string videopath;
+    ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
+                                   "/home/david/Downloads/silent_launches.mp4");
+    if (!initCapture(videopath)) {
+        return 0;
+    }
+
     sensor_msgs::ImagePtr msg;
 
+    int width = 480, height = 480; // TODO: Configurable scaling
     cv::Mat videoFrame;
 
     // Main loop
-    ros::Rate r(capture.get(cv::CAP_PROP_FPS)); // Set loop rate to video fps
+    int target_fps;
+    ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
+    ros::Rate r(target_fps); // Set loop rate for framegrabber
     while (ros::ok()) {
 
         if (!capture.read(videoFrame)) {
@@ -52,11 +64,32 @@ int main(int argc, char **argv) {
         }
 
         // resize videoframe
-        int width = 480, height = 480; // TODO: Configurable scaling
         cv::resize(videoFrame, videoFrame, cv::Size(width, height));
 
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         pubimg.publish(msg);
+
+        // check for parameter updates
+        static int new_target_fps = target_fps;
+        if (ros::param::getCached("rocket_tracker/fg_fps_target", new_target_fps) &&
+            (new_target_fps != target_fps)) {
+            target_fps = new_target_fps;
+            r = ros::Rate(target_fps);
+        }
+        static std::string new_videopath = videopath;
+        if (ros::param::getCached("rocket_tracker/videopath", new_videopath) &&
+            (new_videopath != videopath)) {
+            capture.release();
+            if (initCapture(new_videopath)) {
+                videopath = new_videopath;
+            } else {
+                initCapture(videopath);
+                ROS_WARN("Loading video from %s failed. Reverting to old path %s",
+                         new_videopath.c_str(), videopath.c_str());
+                new_videopath = videopath;
+                ros::param::set("/rocket_tracker/videopath", videopath);
+            }
+        }
 
         ros::spinOnce();
         r.sleep();

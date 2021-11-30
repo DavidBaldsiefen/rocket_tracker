@@ -9,6 +9,7 @@
 // catch exceptions in imageprocessor
 // changing capture size instead of resizing
 // rethink the ordering of resizing and drawing the detection marker
+// evaluate subscriber/publisher buffers
 
 #include "evaluator_gui.h"
 #include <image_transport/image_transport.h>
@@ -23,8 +24,11 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
 
     ui.imageLabel->setMaximumSize(QSize(480, 480));
 
-    QObject::connect(ui.pushButton, &QAbstractButton::pressed, this,
-                     &Evaluator_GUI::on_pushButton_click);
+    std::string videopath;
+    ros::param::get("/rocket_tracker/videopath", videopath);
+    ui.videopath->setText(QString::fromStdString(videopath));
+
+    QObject::connect(ui.applyBtn, &QAbstractButton::pressed, this, &Evaluator_GUI::on_applyBtn);
 }
 
 void Evaluator_GUI::setImage(cv::Mat img) {
@@ -35,6 +39,13 @@ void Evaluator_GUI::setImage(cv::Mat img) {
             cv::rectangle(img, cv::Point2d(receivedDetection.right, receivedDetection.top),
                           cv::Point2d(receivedDetection.left, receivedDetection.bottom),
                           cv::Scalar(0, 255, 0));
+
+            // note propability in GUI
+            std::string str = "Probability of detected object: " +
+                              std::to_string((int)(receivedDetection.propability * 100)) + "%";
+            ui.propability_label->setText(QString::fromStdString(str));
+        } else {
+            ui.propability_label->setText(QString("Probability of detected object: ---"));
         }
 
         ui.imageLabel->setPixmap(QPixmap::fromImage(
@@ -42,8 +53,10 @@ void Evaluator_GUI::setImage(cv::Mat img) {
     }
 }
 
-void Evaluator_GUI::on_pushButton_click() {
-    ROS_INFO("Button pressed");
+void Evaluator_GUI::on_applyBtn() {
+    ros::param::set("rocket_tracker/videopath", ui.videopath->text().toStdString());
+    ros::param::set("rocket_tracker/fg_fps_target", ui.fg_fps_target->value());
+    ROS_INFO("Applying new config");
     // do something
 }
 
@@ -59,6 +72,24 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
 void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
     receivedDetection = msg;
+}
+
+void pushRosParamsToGui(Ui_Form *ui) {
+    double input_fps, input_width, input_height;
+    bool usingCUDA = false;
+    bool retVal = false;
+    retVal |= ros::param::get("/rocket_tracker/input_fps", input_fps);
+    retVal |= ros::param::get("/rocket_tracker/input_width", input_width);
+    retVal |= ros::param::get("/rocket_tracker/input_height", input_height);
+    retVal |= ros::param::get("/rocket_tracker/using_cuda", usingCUDA);
+    if (retVal) {
+        std::string str = "Input Video: " + std::to_string((int)input_width) + "x" +
+                          std::to_string((int)input_height) + "@" + std::to_string((int)input_fps) +
+                          "fps";
+        ui->video_details->setText(QString::fromStdString(str));
+        str = "Using CUDA: " + std::string(usingCUDA ? "Yes" : "No");
+        ui->cuda_label->setText(QString::fromStdString(str));
+    }
 }
 
 int main(int argc, char **argv) {
@@ -89,6 +120,7 @@ int main(int argc, char **argv) {
         // Process ROS events
         ros::spinOnce();
         gui.setImage(receivedFrame);
+        pushRosParamsToGui(gui.getUi());
         r.sleep();
     }
 

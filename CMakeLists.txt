@@ -15,6 +15,7 @@ find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   rqt_gui
   rqt_gui_cpp
+  message_generation
 )
 
 find_package(OpenCV 4 REQUIRED)
@@ -75,11 +76,10 @@ endif()
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  detectionMSG.msg
+)
 
 ## Generate services in the 'srv' folder
 # add_service_files(
@@ -96,10 +96,10 @@ endif()
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   std_msgs
-# )
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -133,7 +133,7 @@ endif()
 catkin_package(
 #  INCLUDE_DIRS include
    LIBRARIES ${PROJECT_NAME}
-   CATKIN_DEPENDS image_transport roscpp rqt_gui_cpp std_msgs
+   CATKIN_DEPENDS image_transport roscpp rqt_gui_cpp std_msgs message_runtime
 #  DEPENDS system_lib
 )
 
@@ -166,7 +166,7 @@ include_directories(
 add_library(${PROJECT_NAME}
     #src/evaluator_node.cpp
     ${rocket_tracker_MOCS}
-    #${rocket_tracker_UIS_H}
+    ${rocket_tracker_UIS_H}
     )
 
 ## Add cmake target dependencies of the library
@@ -194,7 +194,7 @@ foreach(NODE_NAME ${REDUCED_NODE_LIST})
   add_executable(${NODE_NAME} "src/${NODE_NAME}.cpp")
 endforeach()
 
-add_executable(evaluator_node "src/evaluator_node.cpp" ${rocket_tracker_MOCS} ${rocket_tracker_UIS_H})
+add_executable(evaluator_node "src/evaluator_node.cpp" ${rocket_tracker_MOCS})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the

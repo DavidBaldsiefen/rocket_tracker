@@ -1,13 +1,5 @@
 // TODOs:
-// Use Rosparam to set image size, videopath, weightfile path....
-// Make FG fps configurable
-// Show if CUDA is used
-// Make Apply&Restart button working
-// remove "core" subpackage
-// Make IP publish detected object class, probability, coordinates, #of detected objects => custom
-// MSG
 // catch exceptions in imageprocessor
-// changing capture size instead of resizing
 // rethink the ordering of resizing and drawing the detection marker
 // evaluate subscriber/publisher buffers
 
@@ -57,7 +49,6 @@ void Evaluator_GUI::on_applyBtn() {
     ros::param::set("rocket_tracker/videopath", ui.videopath->text().toStdString());
     ros::param::set("rocket_tracker/fg_fps_target", ui.fg_fps_target->value());
     ROS_INFO("Applying new config");
-    // do something
 }
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
@@ -115,7 +106,6 @@ int main(int argc, char **argv) {
     gui.show();
 
     // Main Loop
-    ROS_INFO("Starting main loop");
     ros::Rate r(100);
     while (ros::ok()) {
         // Process GUI events

@@ -40,6 +40,8 @@ int main(int argc, char **argv) {
         height = std::stoi(argv[2]);
     }
     ROS_INFO("Video will be scaled to %dx%d", width, height);
+    ros::param::set("/rocket_tracker/rescaled_width", width);
+    ros::param::set("/rocket_tracker/rescaled_height", height);
 
     // Creating image-transport publisher for rqt
     image_transport::ImageTransport it(nh);

@@ -178,7 +178,12 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     if (!img->image.empty()) {
         // TODO: sync frame_ids to detected coordinates
-        detectionPublisher.publish(processImage(img->image));
+        rocket_tracker::detectionMSG detection;
+        uint64_t time = ros::Time::now().toNSec();
+        detection = processImage(img->image);
+        detection.timestamp = time / 1000000.0;
+        detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
+        detectionPublisher.publish(detection);
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }

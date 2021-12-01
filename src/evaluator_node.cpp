@@ -10,6 +10,7 @@
 
 static cv::Mat receivedFrame;
 static rocket_tracker::detectionMSG receivedDetection;
+static Ui_Form *ui;
 
 Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
     ui.setupUi(this);
@@ -63,6 +64,28 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
 void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
     receivedDetection = msg;
+
+    // Calculate and display statistics
+    // Processing time
+    static double avgProcessingTime = 0.0;
+    ui->ip_time->setText(QString::number(msg.processingTime, 'f', 2) + QString("ms"));
+
+    // theoretically possible avg. fps
+    static int avgCounter = 0;
+    avgProcessingTime += msg.processingTime;
+    avgCounter++;
+    if (avgCounter >= 10) {
+        ui->ip_fps_avg->setText(QString::number(10000.0 / avgProcessingTime, 'f', 0) +
+                                QString("fps"));
+        avgCounter = 0;
+        avgProcessingTime = 0.0;
+    }
+
+    // actual fps based on frequenc of incoming messages in IP
+    static double lastTimestamp = msg.timestamp - 0.1; // subtract 0.1 to preent div/0
+    double actualFPS = (1000.0 / (msg.timestamp - lastTimestamp));
+    lastTimestamp = msg.timestamp;
+    ui->ip_fps_actual->setText(QString::number(actualFPS, 'f', 0) + QString("fps"));
 }
 
 void pushRosParamsToGui(Ui_Form *ui) {
@@ -103,6 +126,7 @@ int main(int argc, char **argv) {
     // start GUI
     QApplication app(argc, argv);
     Evaluator_GUI gui;
+    ui = gui.getUi();
     gui.show();
 
     // Main Loop

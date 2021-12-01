@@ -5,3 +5,5 @@ int32 right
 int32 classID
 int32 frameID
 float64 propability
+float64 processingTime
+float64 timestamp

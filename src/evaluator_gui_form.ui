@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>743</width>
+    <width>725</width>
     <height>548</height>
    </rect>
   </property>
@@ -63,15 +63,32 @@
      </item>
      <item row="1" column="1">
       <layout class="QGridLayout" name="gridLayout">
-       <item row="4" column="0">
+       <item row="6" column="2">
+        <widget class="QLabel" name="ip_fps_avg">
+         <property name="text">
+          <string>000fps</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item row="4" column="0" colspan="2">
         <widget class="QLabel" name="label_6">
          <property name="text">
-          <string>IP FPS:</string>
+          <string>Image Processing Time</string>
          </property>
         </widget>
        </item>
        <item row="0" column="1" colspan="2">
         <widget class="QLineEdit" name="videopath"/>
+       </item>
+       <item row="5" column="0">
+        <widget class="QLabel" name="label_2">
+         <property name="text">
+          <string>Last Frame</string>
+         </property>
+        </widget>
        </item>
        <item row="1" column="1" colspan="2">
         <widget class="QSpinBox" name="fg_fps_target">
@@ -101,7 +118,7 @@
           </sizepolicy>
          </property>
          <property name="text">
-          <string>Apply and Restart</string>
+          <string>Apply</string>
          </property>
         </widget>
        </item>
@@ -138,7 +155,7 @@
          </property>
         </widget>
        </item>
-       <item row="5" column="0">
+       <item row="8" column="0">
         <spacer name="verticalSpacer_2">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -150,6 +167,52 @@
           </size>
          </property>
         </spacer>
+       </item>
+       <item row="6" column="0" colspan="2">
+        <widget class="QLabel" name="label_4">
+         <property name="toolTip">
+          <string/>
+         </property>
+         <property name="statusTip">
+          <string/>
+         </property>
+         <property name="whatsThis">
+          <string/>
+         </property>
+         <property name="text">
+          <string>Theoretical avg FPS:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="2">
+        <widget class="QLabel" name="ip_time">
+         <property name="text">
+          <string>0.00ms</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0">
+        <widget class="QLabel" name="label_8">
+         <property name="toolTip">
+          <string>Limited by FG publishing rate</string>
+         </property>
+         <property name="text">
+          <string>Actual FPS:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="2">
+        <widget class="QLabel" name="ip_fps_actual">
+         <property name="text">
+          <string>000fps</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+         </property>
+        </widget>
        </item>
       </layout>
      </item>

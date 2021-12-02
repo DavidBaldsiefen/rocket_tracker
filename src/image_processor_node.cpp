@@ -105,13 +105,27 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     cv_bridge::CvImageConstPtr img = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
 
+    // check for missed frames
+    static uint last_frame_id = msg->header.seq;
+    if (msg->header.seq - last_frame_id > 1) {
+        ROS_WARN("Frame dropped from FG->IP: jumped from index %u to %u", last_frame_id,
+                 msg->header.seq);
+    }
+    last_frame_id = msg->header.seq;
+
     if (!img->image.empty()) {
         // TODO: sync frame_ids to detected coordinates
-        rocket_tracker::detectionMSG detection;
         uint64_t time = ros::Time::now().toNSec();
+
+        rocket_tracker::detectionMSG detection;
         detection = processImage(img->image);
+
         detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
         detection.timestamp = time / 1000000.0;
+        // total time between framecapture and detection being published:
+        double detectionTime = (ros::Time::now().toNSec() - msg->header.stamp.toNSec()) / 1000000.0;
+        ROS_INFO("Total detection time: %.2lf", detectionTime);
+
         detectionPublisher.publish(detection);
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");

@@ -72,20 +72,26 @@ int main(int argc, char **argv) {
     int target_fps;
     ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
     ros::Rate r(target_fps); // Set loop rate for framegrabber
+
+    uint frame_id = 0;
     while (ros::ok()) {
 
         if (!capture.read(videoFrame)) {
             ROS_INFO("End of video reached - resetting to first frame.");
             capture.set(cv::CAP_PROP_POS_FRAMES, 0);
+            frame_id = 0;
             ros::Duration(0.5).sleep();
             continue;
         }
+        ros::Time timestamp = ros::Time::now();
 
         // resize videoframe
         cv::resize(videoFrame, videoFrame, cv::Size(width, height));
-
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
+        msg->header.stamp = timestamp;
+        msg->header.seq = frame_id;
         pubimg.publish(msg);
+        frame_id++;
 
         // check for parameter updates
         static int new_target_fps = target_fps;

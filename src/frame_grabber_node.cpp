@@ -31,13 +31,24 @@ int main(int argc, char **argv) {
         ros::console::notifyLoggerLevelsChanged();
     }
 
-    // Get imagesize from arguments
+    // Get imagesize and video-path from arguments
     int width = 480, height = 480;
+    std::string videopath;
     if (argc == 2) {
         width = std::stoi(argv[1]);
     } else if (argc == 3) {
         width = std::stoi(argv[1]);
         height = std::stoi(argv[2]);
+    } else if (argc == 4) {
+        width = std::stoi(argv[1]);
+        height = std::stoi(argv[2]);
+        videopath = argv[3];
+    }
+    if (videopath == "") {
+        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
+                                       "/home/david/Downloads/silent_launches.mp4");
+    } else {
+        ros::param::set("/rocket_tracker/videopath", videopath);
     }
     ROS_INFO("Video will be scaled to %dx%d", width, height);
     ros::param::set("/rocket_tracker/rescaled_width", width);
@@ -50,9 +61,6 @@ int main(int argc, char **argv) {
         it.advertise("/image_topic", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
 
     // Open video capture
-    std::string videopath;
-    ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
-                                   "/home/david/Downloads/silent_launches.mp4");
     if (!initCapture(videopath)) {
         return 0;
     }

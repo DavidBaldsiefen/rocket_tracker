@@ -16,7 +16,7 @@
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
         output="screen"
-	args="$(arg imgw) $(arg imgh) $(arg video)"/>
+	args="$(arg video) $(arg imgw) $(arg imgh)"/>
 
     #Starting image processor node
     <node 
@@ -25,12 +25,5 @@
         name="IMAGEPROCESSOR"
         output="screen"
         args="$(arg weights) $(arg usecuda)"/>
-
-    #Starting evaluator node
-    <node 
-        pkg="rocket_tracker" 
-        type="evaluator_node" 
-        name="EVALUATOR"
-        output="screen"/>
         
 </launch>

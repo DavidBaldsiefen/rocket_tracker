@@ -1,7 +1,7 @@
-int32 top
-int32 bottom
-int32 left
-int32 right
+int32 centerX
+int32 centerY
+int32 width
+int32 height
 int32 classID
 int32 frameID
 float64 propability

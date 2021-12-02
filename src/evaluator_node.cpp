@@ -29,8 +29,10 @@ void Evaluator_GUI::setImage(cv::Mat img) {
 
         // draw detection
         if (receivedDetection.propability != 0.0) {
-            cv::rectangle(img, cv::Point2d(receivedDetection.right, receivedDetection.top),
-                          cv::Point2d(receivedDetection.left, receivedDetection.bottom),
+            cv::rectangle(img,
+                          cv::Rect(receivedDetection.centerX - receivedDetection.width / 2,
+                                   receivedDetection.centerY - receivedDetection.height / 2,
+                                   receivedDetection.width, receivedDetection.height),
                           cv::Scalar(0, 255, 0));
 
             // note propability in GUI

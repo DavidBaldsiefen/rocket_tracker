@@ -16,7 +16,7 @@
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
         output="screen"
-	args="$(arg video) $(arg imgw) $(arg imgh)"/>
+	args="$(arg imgw) $(arg imgh) $(arg video)"/>
 
     #Starting image processor node
     <node 

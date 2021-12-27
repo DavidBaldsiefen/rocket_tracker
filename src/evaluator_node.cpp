@@ -20,6 +20,7 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
     std::string videopath;
     ros::param::get("/rocket_tracker/videopath", videopath);
     ui.videopath->setText(QString::fromStdString(videopath));
+    ros::param::set("rocket_tracker/use_highest_rocket", ui.ip_height_filter_cb->isChecked());
 
     QObject::connect(ui.applyBtn, &QAbstractButton::pressed, this, &Evaluator_GUI::on_applyBtn);
 }
@@ -51,6 +52,7 @@ void Evaluator_GUI::setImage(cv::Mat img) {
 void Evaluator_GUI::on_applyBtn() {
     ros::param::set("rocket_tracker/videopath", ui.videopath->text().toStdString());
     ros::param::set("rocket_tracker/fg_fps_target", ui.fg_fps_target->value());
+    ros::param::set("rocket_tracker/use_highest_rocket", ui.ip_height_filter_cb->isChecked());
     ROS_INFO("Applying new config");
 }
 

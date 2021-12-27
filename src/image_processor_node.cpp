@@ -38,6 +38,84 @@ bool init(std::string weightfilepath, bool usecuda) {
     return true;
 }
 
+std::vector<torch::Tensor> non_max_suppression(torch::Tensor preds, float score_thresh = 0.5,
+                                               float iou_thresh = 0.5,
+                                               torch::Device device = torch::Device(torch::kCPU)) {
+    std::vector<torch::Tensor> output;
+    for (size_t i = 0; i < preds.sizes()[0]; ++i) {
+        torch::Tensor pred = preds.select(0, i);
+
+        // Filter by scores
+        torch::Tensor scores =
+            pred.select(1, 4) * std::get<0>(torch::max(pred.slice(1, 5, pred.sizes()[1]), 1));
+        pred = torch::index_select(pred, 0, torch::nonzero(scores > score_thresh).select(1, 0));
+        if (pred.sizes()[0] == 0)
+            continue;
+
+        // (center_x, center_y, w, h) to (left, top, right, bottom)
+        pred.select(1, 0) = pred.select(1, 0) - pred.select(1, 2) / 2;
+        pred.select(1, 1) = pred.select(1, 1) - pred.select(1, 3) / 2;
+        pred.select(1, 2) = pred.select(1, 0) + pred.select(1, 2);
+        pred.select(1, 3) = pred.select(1, 1) + pred.select(1, 3);
+
+        // Computing scores and classes
+        std::tuple<torch::Tensor, torch::Tensor> max_tuple =
+            torch::max(pred.slice(1, 5, pred.sizes()[1]), 1);
+        pred.select(1, 4) = pred.select(1, 4) * std::get<0>(max_tuple);
+        pred.select(1, 5) = std::get<1>(max_tuple);
+
+        torch::Tensor dets = pred.slice(1, 0, 6);
+
+        torch::Tensor keep = torch::empty({dets.sizes()[0]}, device);
+        torch::Tensor areas =
+            (dets.select(1, 3) - dets.select(1, 1)) * (dets.select(1, 2) - dets.select(1, 0));
+        std::tuple<torch::Tensor, torch::Tensor> indexes_tuple =
+            torch::sort(dets.select(1, 4), 0, 1);
+        torch::Tensor v = std::get<0>(indexes_tuple);
+        torch::Tensor indexes = std::get<1>(indexes_tuple);
+        int count = 0;
+        while (indexes.sizes()[0] > 0) {
+            keep[count] = (indexes[0].item().toInt());
+            count += 1;
+
+            // Computing overlaps
+            torch::Tensor lefts = torch::empty(indexes.sizes()[0] - 1, device);
+            torch::Tensor tops = torch::empty(indexes.sizes()[0] - 1, device);
+            torch::Tensor rights = torch::empty(indexes.sizes()[0] - 1, device);
+            torch::Tensor bottoms = torch::empty(indexes.sizes()[0] - 1, device);
+            torch::Tensor widths = torch::empty(indexes.sizes()[0] - 1, device);
+            torch::Tensor heights = torch::empty(indexes.sizes()[0] - 1, device);
+            for (size_t i = 0; i < indexes.sizes()[0] - 1; ++i) {
+                lefts[i] = std::max(dets[indexes[0]][0].item().toFloat(),
+                                    dets[indexes[i + 1]][0].item().toFloat());
+                tops[i] = std::max(dets[indexes[0]][1].item().toFloat(),
+                                   dets[indexes[i + 1]][1].item().toFloat());
+                rights[i] = std::min(dets[indexes[0]][2].item().toFloat(),
+                                     dets[indexes[i + 1]][2].item().toFloat());
+                bottoms[i] = std::min(dets[indexes[0]][3].item().toFloat(),
+                                      dets[indexes[i + 1]][3].item().toFloat());
+                widths[i] =
+                    std::max(float(0), rights[i].item().toFloat() - lefts[i].item().toFloat());
+                heights[i] =
+                    std::max(float(0), bottoms[i].item().toFloat() - tops[i].item().toFloat());
+            }
+            torch::Tensor overlaps = widths * heights;
+
+            // FIlter by IOUs
+            torch::Tensor ious =
+                overlaps /
+                (areas.select(0, indexes[0].item().toInt()) +
+                 torch::index_select(areas, 0, indexes.slice(0, 1, indexes.sizes()[0])) - overlaps);
+            indexes = torch::index_select(indexes, 0,
+                                          torch::nonzero(ious <= iou_thresh).select(1, 0) + 1);
+        }
+
+        keep = keep.toType(torch::kInt64);
+        output.push_back(torch::index_select(dets, 0, keep.slice(0, 0, count)));
+    }
+    return output;
+}
+
 rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     rocket_tracker::detectionMSG result;
@@ -68,29 +146,64 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     uint64_t time3 = ros::Time::now().toNSec();
 
-    // Determine the tensor with the highest probability and take its parameters
-    // we can actually completely skip "normal" nms because we only want to detect one object,
-    // and will choose the highest propability one anyway
     if (preds.size(0) != 0) {
 
-        torch::Tensor pred = preds.select(0, 0);
-        torch::Tensor scores = pred.select(1, 4);
+        static bool use_highest_rocket = false;
+        if (ros::param::getCached("rocket_tracker/use_highest_rocket", use_highest_rocket) &&
+            use_highest_rocket) {
+            // use NMS and determine highest rocket with probability > 0.5
 
-        // this if-check may not be necessary
-        if (scores.sizes()[0] > 0) {
+            std::vector<torch::Tensor> dets = non_max_suppression(preds, 0.5, 0.5, torchDevice);
+            if (dets.size() > 0) {
+                int highestTarget = 0;
+                int highestHeight =
+                    10000; // height is counted top-to-bottom (coordinate system has 0 on top)
 
-            // This is where the magic of getting the index (<1>) of the tensor with the highest
-            // probability happens
-            int maxTensorIndex = std::get<1>(torch::max(scores, 0)).item().toInt();
-            torch::Tensor detection = pred[maxTensorIndex];
+                for (int i = 0; i < dets[0].sizes()[0]; i++) {
+                    int height = dets[0][i][1].item().toInt();
+                    if (height < highestHeight) {
+                        highestHeight = height;
+                        highestTarget = i;
+                    }
+                }
 
-            if (detection[4].item().toDouble() > 0.5) {
-                result.centerX = detection[0].item().toInt();
-                result.centerY = detection[1].item().toInt();
-                result.width = detection[2].item().toInt();
-                result.height = detection[3].item().toInt();
-                result.propability = detection[4].item().toDouble();
-                result.classID = detection[5].item().toInt();
+                // Draw the highest scoring target
+                int left = dets[0][highestTarget][0].item().toInt();   // * frame.cols / width;
+                int top = dets[0][highestTarget][1].item().toInt();    // * frame.rows / height;
+                int right = dets[0][highestTarget][2].item().toInt();  // * frame.cols / width;
+                int bottom = dets[0][highestTarget][3].item().toInt(); // * frame.rows / height;
+                result.centerX = left + (right - left) / 2;
+                result.centerY = top + (bottom - top) / 2;
+                result.width = (right - left);
+                result.height = (bottom - top);
+                result.classID = dets[0][highestTarget][5].item().toInt();
+                result.propability = dets[0][highestTarget][4].item().toDouble();
+            }
+
+        } else {
+            // Determine the tensor with the highest probability and take its parameters
+            // we can actually completely skip "normal" nms because we only want to detect one
+            // object, and will choose the highest propability one anyway no NMS necessary
+
+            torch::Tensor pred = preds.select(0, 0);
+            torch::Tensor scores = pred.select(1, 4);
+
+            // this if-check may not be necessary
+            if (scores.sizes()[0] > 0) {
+
+                // This is where the magic of getting the index (<1>) of the tensor with the highest
+                // probability happens
+                int maxTensorIndex = std::get<1>(torch::max(scores, 0)).item().toInt();
+                torch::Tensor detection = pred[maxTensorIndex];
+
+                if (detection[4].item().toDouble() > 0.5) {
+                    result.centerX = detection[0].item().toInt();
+                    result.centerY = detection[1].item().toInt();
+                    result.width = detection[2].item().toInt();
+                    result.height = detection[3].item().toInt();
+                    result.propability = detection[4].item().toDouble();
+                    result.classID = detection[5].item().toInt();
+                }
             }
         }
     }

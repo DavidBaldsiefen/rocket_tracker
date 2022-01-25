@@ -51,6 +51,41 @@ else ()
     message(FATAL_ERROR "Could not locate Torch" \n)
 endif()
 
+#####################
+##    TensorRT     ##
+#####################
+
+# Variables should have been set by libtorch already
+# CUDA
+if (NOT CUDA_TOOLKIT_ROOT_DIR)
+  set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda-11.4)
+endif()
+find_path(CUDA_INCLUDE_DIR cuda_runtime.h
+  HINTS ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES include
+)
+MESSAGE(STATUS "Found CUDA headers at ${CUDA_INCLUDE_DIR}")
+
+# TensorRT
+find_path(TENSORRT_INCLUDE_DIR NvInfer.h
+  HINTS ${TENSORRT_ROOT} ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES include)
+MESSAGE(STATUS "Found TensorRT headers at ${TENSORRT_INCLUDE_DIR}")
+find_library(TENSORRT_LIBRARY_INFER nvinfer
+  HINTS ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES lib lib64 lib/x64)
+find_library(TENSORRT_LIBRARY_INFER_PLUGIN nvinfer_plugin
+  HINTS  ${TENSORRT_ROOT} ${TENSORRT_BUILD} ${CUDA_TOOLKIT_ROOT_DIR}
+  PATH_SUFFIXES lib lib64 lib/x64)
+set(TENSORRT_LIBRARY ${TENSORRT_LIBRARY_INFER} ${TENSORRT_LIBRARY_INFER_PLUGIN})
+MESSAGE(STATUS "Find TensorRT libs at ${TENSORRT_LIBRARY}")
+find_package_handle_standard_args(
+  TENSORRT DEFAULT_MSG TENSORRT_INCLUDE_DIR TENSORRT_LIBRARY)
+if(NOT TENSORRT_FOUND)
+  message(ERROR "Cannot find TensorRT library.")
+endif()
+
+
 ################################################
 ## Declare ROS messages, services and actions ##
 ################################################
@@ -216,6 +251,7 @@ foreach(NODE_NAME ${NODE_LIST})
     ${catkin_LIBRARIES}
     ${OpenCV_LIBRARIES}
     ${TORCH_LIBRARIES}
+    ${TENSORRT_LIBRARY}
   )
 
   if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")

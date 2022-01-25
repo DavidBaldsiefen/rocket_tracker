@@ -16,6 +16,9 @@ static ros::Publisher detectionPublisher;
 static torch::jit::script::Module module;
 static torch::Device torchDevice = torch::Device(torch::kCPU);
 
+static void *buffers[5];
+nvinfer1::IExecutionContext *context;
+
 const bool TIME_LOGGING = false;
 
 bool init(std::string weightfilepath, bool usecuda) {
@@ -262,135 +265,95 @@ class Logger : public nvinfer1::ILogger {
     }
 } logger;
 
-size_t getSizeByDim(const nvinfer1::Dims &dims) {
-    size_t size = 1;
-    for (size_t i = 0; i < dims.nbDims; ++i) {
-        size *= dims.d[i];
+void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
+    if (img.empty()) {
+        ROS_WARN("Empty image received!");
     }
-    return size;
+    cv::resize(img, img, cv::Size(640, 640));
+    cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
+
+    static float inputArray[1 * 3 * 640 * 640];
+    int i = 0;
+    for (int row = 0; row < 640; ++row) {
+        uchar *uc_pixel = img.data + row * img.step;
+        for (int col = 0; col < 640; ++col) {
+            inputArray[i] = (float)uc_pixel[2] / 255.0;
+            inputArray[i + 640 * 640] = (float)uc_pixel[1] / 255.0;
+            inputArray[i + 2 * 640 * 640] = (float)uc_pixel[0] / 255.0;
+            uc_pixel += 3;
+            ++i;
+        }
+    }
+    cudaMemcpy(inputBuffer, inputArray, 1 * 3 * 640 * 640 * sizeof(float), cudaMemcpyHostToDevice);
 }
 
-void preprocessImage(const std::string &image_path, float *gpu_input, const nvinfer1::Dims &dims) {
-    cv::Mat frame = cv::imread(image_path);
-    if (frame.empty()) {
-        std::cerr << "Input image " << image_path << " load failed\n";
-        return;
-    }
-    cv::cuda::GpuMat gpu_frame;
-    // upload image to GPU
-    gpu_frame.upload(frame);
-    auto input_width = dims.d[2];
-    auto input_height = dims.d[1];
-    auto channels = dims.d[0];
-    auto input_size = cv::Size(input_width, input_height);
-    // resize
-    cv::cuda::GpuMat resized;
-    cv::cuda::resize(gpu_frame, resized, input_size, 0, 0, cv::INTER_NEAREST);
-    cv::cuda::GpuMat flt_image;
-    resized.convertTo(flt_image, CV_32FC3, 1.f / 255.f);
-    cv::cuda::subtract(flt_image, cv::Scalar(0.485f, 0.456f, 0.406f), flt_image, cv::noArray(), -1);
-    cv::cuda::divide(flt_image, cv::Scalar(0.229f, 0.224f, 0.225f), flt_image, 1, -1);
-    std::vector<cv::cuda::GpuMat> chw;
-    for (size_t i = 0; i < channels; ++i) {
-        chw.emplace_back(
-            cv::cuda::GpuMat(input_size, CV_32FC1, gpu_input + i * input_width * input_height));
-    }
-    cv::cuda::split(flt_image, chw);
-}
+void postprocessTRTdetections(void *outputBuffer) {
+    std::vector<float> cpu_output(
+        1 * 25200 *
+        85); // =2142000. Can also be obtained by using engine->getBindingDimensions(outputIndex)
+             // and then multiplying the size of each dimension
+    cudaMemcpy(cpu_output.data(), outputBuffer, cpu_output.size() * sizeof(float),
+               cudaMemcpyDeviceToHost);
+    ROS_INFO("Received output of size %ld", long(cpu_output.size())); // 2142000
 
-void doInference(nvinfer1::IExecutionContext &context, cudaStream_t &stream, void **buffers,
-                 float *input, float *output, int batchSize) {
-    // DMA input batch data to device, infer on the batch asynchronously, and DMA output back to
-    // host
-    ROS_INFO("calling cudaMemcpyAsync 1");
-    cudaMemcpyAsync(buffers[0], input, batchSize * 3 * 640 * 640 * sizeof(float),
-                    cudaMemcpyHostToDevice, stream);
-    // CHECK(cudaMemcpyAsync(buffers[0], input, batchSize * 3 * 640 * 640 * sizeof(float),
-    // cudaMemcpyHostToDevice, stream));
-    ROS_INFO("calling enqueue");
-    // context.enqueue(batchSize, buffers, stream, nullptr);
-    context.enqueueV2(buffers, stream, nullptr);
-    // OUTPUT_SIZE?
-    ROS_INFO("calling cudaMemcpyAsync 2");
-    cudaMemcpyAsync(output, buffers[1], batchSize * (7 * 7 * 30) * sizeof(float),
-                    cudaMemcpyDeviceToHost, stream);
-    // CHECK(cudaMemcpyAsync(output, buffers[1], batchSize * 1 * sizeof(float),
-    // cudaMemcpyDeviceToHost, stream));
-    ROS_INFO("calling cudaStreamSynchronize");
-    cudaStreamSynchronize(stream);
-    ROS_INFO("Leaving doInference");
-}
+    // The Problem seems to be that the output is fp16 encoded, while "float" is fp32
 
-struct YoloDetection {
-    int classID;
-    cv::Rect bbox;
-};
+    unsigned long outputSize = cpu_output.size();
 
-void parseYolov5(cv::Mat &img, nvinfer1::ICudaEngine *engine, nvinfer1::IExecutionContext *context,
-                 std::vector<YoloDetection> &batch_res) {
-    // 准备数据 ---------------------------
-    static float data[1 * 3 * 640 * 640]; //输入
-    static float prob[1 * 7 * 7 * 30];    // Output-size  //输出
+    unsigned long dimensions = 85; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
+    unsigned long rows = outputSize / dimensions; // 25.200
+    unsigned long confidenceIndex = 4;
+    unsigned long labelStartIndex = 5;
+    float modelWidth = 640.0;
+    float modelHeight = 640.0;
+    float xGain = modelWidth / 640.0;
+    float yGain = modelHeight / 640.0;
 
-    ROS_INFO("Engine name: %s NbBindings: %d", engine->getName(), engine->getNbBindings());
-    ROS_INFO("Name of Binding 0: %s", engine->getBindingName(0));
-    ROS_INFO("Name of Binding 1: %s", engine->getBindingName(1));
-    ROS_INFO("Name of Binding 2: %s", engine->getBindingName(2));
-    ROS_INFO("Name of Binding 3: %s", engine->getBindingName(3));
-    ROS_INFO("Name of Binding 4: %s", engine->getBindingName(4));
-    // assert(engine->getNbBindings() == 2);
+    std::vector<int> labels;
+    std::vector<float> confidences;
+    std::vector<cv::Rect> locations;
 
-    void *buffers[2];
-    // In order to bind the buffers, we need to know the names of the input and output tensors.
-    // Note that indices are guaranteed to be less than IEngine::getNbBindings()
-    const int inputIndex = engine->getBindingIndex("images");
-    const int outputIndex = engine->getBindingIndex("output");
-    assert(inputIndex == 0);
-    // assert(outputIndex == 1);
-    // Create GPU buffers on device
-    cudaSetDevice(0);
-    cudaError_t err = cudaMalloc(&buffers[0], 1 * 3 * 640 * 640 * sizeof(float));
-    if (err != cudaSuccess)
-        ROS_WARN("Unable to allocate memory! [%d]", err);
+    cv::Rect rect;
+    cv::Vec4f location;
+    long numPushbacks = 0;
+    long long numSkips = 0;
+    long long numSkips2 = 0;
+    for (unsigned long i = 0; i < rows; ++i) {
+        unsigned long index = i * dimensions;
+        if (cpu_output[index + confidenceIndex] <= 0.4f) {
+            numSkips++;
+            continue;
+        }
 
-    err = cudaMalloc(&buffers[1], 1 * (7 * 7 * 30) * sizeof(float));
-    if (err != cudaSuccess)
-        ROS_WARN("Unable to allocate memory! [%d]", err);
-    // CHECK(cudaMalloc(&buffers[0], 1 * 3 * 640 * 640 * sizeof(float)));
-    // CHECK(cudaMalloc(&buffers[1], 1 * 1 * sizeof(float))); // OUTPUT_SIZE
-    // Create stream
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-    // CHECK(cudaStreamCreate(&stream));
+        for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
+            cpu_output[index + j] = cpu_output[index + j] * cpu_output[index + confidenceIndex];
+        }
 
-    if (!img.empty()) {
-        cv::Mat pr_img;
-        cv::cvtColor(img, pr_img, cv::COLOR_BGR2RGB);
-        // cv::Mat pr_img = preprocess_img(img); // letterbox BGR to RGB
-        int i = 0;
-        for (int row = 0; row < 640; ++row) {
-            uchar *uc_pixel = pr_img.data + row * pr_img.step;
-            for (int col = 0; col < 640; ++col) {
-                data[i] = (float)uc_pixel[2] / 255.0;
-                data[i + 640 * 640] = (float)uc_pixel[1] / 255.0;
-                data[i + 2 * 640 * 640] = (float)uc_pixel[0] / 255.0;
-                uc_pixel += 3;
-                ++i;
+        for (unsigned long k = labelStartIndex; k < dimensions; ++k) {
+            if (cpu_output[index + k] <= 0.5f) {
+                numSkips2++;
+                continue;
             }
+
+            rect = cv::Rect(cpu_output[index] * 1, cpu_output[index + 1] * 1,
+                            cpu_output[index + 2] * 1, cpu_output[index + 3] * 1);
+            locations.push_back(rect);
+
+            labels.emplace_back(k - labelStartIndex);
+
+            confidences.emplace_back(cpu_output[index + k]);
+            numPushbacks++;
         }
     }
 
-    // Run inference
-    doInference(*context, stream, buffers, data, prob, 1);
+    ROS_INFO("Confidences: %ld Rects: %ld Labels: %ld", confidences.size(), locations.size(),
+             labels.size());
 
-    // nms(batch_res, &prob[0 * 1], 0.5, 0.5); // OUTPUT_SIZE
-
-    // Release stream and buffers
-    cudaStreamDestroy(stream);
-    cudaFree(buffers[0]);
-    cudaFree(buffers[1]);
-    // CHECK(cudaFree(buffers[0]));
-    // CHECK(cudaFree(buffers[1]));
+    // Evaluate results
+    for (int i = 0; i < confidences.size(); i++) {
+        ROS_INFO("Label: %d Conf: %f [%d %d] [%d %d]", labels[i], confidences[i], locations[i].x,
+                 locations[i].y, locations[i].width, locations[i].height);
+    }
 }
 
 int main(int argc, char **argv) {
@@ -419,7 +382,7 @@ int main(int argc, char **argv) {
     }
 
     // TensorRT
-    ROS_INFO("Entering the danger zone");
+    ROS_INFO("Initializing TRT");
     long size;
     char *trtModelStream;
     std::ifstream file("/home/david/NN-Models/yolov5/yolov5n.engine", std::ios::binary);
@@ -437,173 +400,34 @@ int main(int argc, char **argv) {
     assert(runtime != nullptr);
     nvinfer1::ICudaEngine *engine = runtime->deserializeCudaEngine(trtModelStream, size);
     assert(engine != nullptr);
-    nvinfer1::IExecutionContext *context = engine->createExecutionContext();
+    context = engine->createExecutionContext();
     assert(context != nullptr);
     delete[] trtModelStream;
 
-    cv::Mat frame = cv::imread("/home/david/Pictures/demo.jpg");
-    std::vector<YoloDetection> detections;
-    // parseYolov5(frame, engine, context, detections);
-
-    ROS_INFO("Going into self-programmed stuff");
-
-    // YOLOv5s has 5 Bindings
-    ROS_INFO("Engine name: %s NbBindings: %d", engine->getName(), engine->getNbBindings());
-    void *buffers[5];
     int32_t inputIndex = engine->getBindingIndex("images");
     int32_t outputIndex = engine->getBindingIndex("output");
-    std::vector<nvinfer1::Dims> input_dims;  // we expect only one input
-    std::vector<nvinfer1::Dims> output_dims; // and one output
     for (int i = 0; i < 5; i++) {
-        ROS_INFO("Binding %d:\n[Name: %s][dType: %d]", i, engine->getBindingName(i),
-                 int(engine->getBindingDataType(i)));
-
-        auto binding_size = getSizeByDim(engine->getBindingDimensions(i)) * 1 * sizeof(float);
+        size_t size = 1;
+        nvinfer1::Dims dims = engine->getBindingDimensions(i);
+        for (size_t i = 0; i < dims.nbDims; ++i) {
+            size *= dims.d[i];
+        }
+        auto binding_size = size * 1 * sizeof(float);
 
         cudaMalloc(&buffers[i], binding_size);
-
-        if (i == inputIndex) {
-            input_dims.emplace_back(engine->getBindingDimensions(i));
-        } else if (i == outputIndex) {
-            output_dims.emplace_back(engine->getBindingDimensions(i));
-        }
     }
 
-    // buffers[inputIndex] = inputBuffer;
-    // buffers[outputIndex] = outputBuffer;
+    ROS_INFO("TRT initialized");
 
-    // somehow put buffers on gpu, input image in buffer[inputIndex]
-
-    // preprocessImage("/home/david/Pictures/demo.jpg", (float *)buffers[inputIndex],
-    // input_dims[0]);
+    // put input image in buffer[inputIndex]
     cv::Mat inputImg = cv::imread("/home/david/Pictures/demo.jpg");
-    if (frame.empty()) {
-        std::cerr << "Input image load failed\n";
-    }
-    cv::resize(inputImg, inputImg, cv::Size(640, 640));
-    cv::cvtColor(inputImg, inputImg, cv::COLOR_BGR2RGB);
 
-    static float inputArray[1 * 3 * 640 * 640];
-    int i = 0;
-    for (int row = 0; row < 640; ++row) {
-        uchar *uc_pixel = inputImg.data + row * inputImg.step;
-        for (int col = 0; col < 640; ++col) {
-            inputArray[i] = (float)uc_pixel[2] / 255.0;
-            inputArray[i + 640 * 640] = (float)uc_pixel[1] / 255.0;
-            inputArray[i + 2 * 640 * 640] = (float)uc_pixel[0] / 255.0;
-            uc_pixel += 3;
-            ++i;
-        }
-    }
-    cudaMemcpy(buffers[0], inputArray, 1 * 3 * 640 * 640 * sizeof(float), cudaMemcpyHostToDevice);
+    // run inference
+    preprocessImgTRT(inputImg, buffers[inputIndex]);
+    context->enqueueV2(buffers, 0, nullptr);
+    postprocessTRTdetections(buffers[outputIndex]);
 
-    cudaStream_t stream;
-    cudaStreamCreate(&stream);
-
-    context->enqueueV2(buffers, stream, nullptr);
-
-    // result is now in buffers[outputIndex]
-    std::vector<float> cpu_output(getSizeByDim(output_dims[0]) * 1);
-    cudaMemcpy(cpu_output.data(), buffers[outputIndex], cpu_output.size() * sizeof(float),
-               cudaMemcpyDeviceToHost);
-    ROS_INFO("Received output of size %ld", long(cpu_output.size())); // 2142000
-    long numValuesOver4 = 0;
-    long numValuesOver10 = 0;
-    for (std::vector<float>::iterator it = cpu_output.begin(); it != cpu_output.end(); ++it) {
-        //*it = *it / 1024.0; // "Conversion" to fp16
-        if (*it > 0.4f) {
-            numValuesOver4++;
-            // ROS_INFO("%f", *it);
-        }
-        if (*it > 1.0f) {
-            numValuesOver10++;
-        }
-    }
-    ROS_INFO("Num values >.4: %ld | >1.0: %ld", numValuesOver4, numValuesOver10);
-
-    // The Problem seems to be that the output is fp16 encoded, while "float" is fp32
-
-    unsigned long outputSize = cpu_output.size();
-
-    unsigned long dimensions = 85; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    unsigned long rows = outputSize / dimensions; // 25.200
-    unsigned long confidenceIndex = 4;
-    unsigned long labelStartIndex = 5;
-    float modelWidth = 640.0;
-    float modelHeight = 640.0;
-    float xGain = modelWidth / 640;
-    float yGain = modelHeight / 640;
-
-    std::vector<cv::Vec4f> locations;
-    std::vector<int> labels;
-    std::vector<float> confidences;
-
-    std::vector<cv::Rect> src_rects;
-    std::vector<cv::Rect> res_rects;
-    std::vector<int> res_indexs;
-
-    cv::Rect rect;
-    cv::Vec4f location;
-    long numPushbacks = 0;
-    long long numSkips = 0;
-    long long numSkips2 = 0;
-    for (unsigned long i = 0; i < rows; ++i) {
-        unsigned long index = i * dimensions;
-        if (cpu_output[index + confidenceIndex] <= 0.4f) {
-            numSkips++;
-            continue;
-        }
-
-        for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-            cpu_output[index + j] = cpu_output[index + j] * cpu_output[index + confidenceIndex];
-        }
-
-        for (unsigned long k = labelStartIndex; k < dimensions; ++k) {
-            if (cpu_output[index + k] <= 0.5f) {
-                numSkips2++;
-                continue;
-            }
-
-            location[0] = (cpu_output[index] - cpu_output[index + 2] / 2) / xGain;     // top left x
-            location[1] = (cpu_output[index + 1] - cpu_output[index + 3] / 2) / yGain; // top left y
-            location[2] = (cpu_output[index] + cpu_output[index + 2] / 2) / xGain; // bottom right x
-            location[3] =
-                (cpu_output[index + 1] + cpu_output[index + 3] / 2) / yGain; // bottom right y
-
-            locations.emplace_back(location);
-
-            rect = cv::Rect(location[0], location[1], location[2] - location[0],
-                            location[3] - location[1]);
-            src_rects.push_back(rect);
-            labels.emplace_back(k - labelStartIndex);
-
-            confidences.emplace_back(cpu_output[index + k]);
-            numPushbacks++;
-        }
-    }
-
-    ROS_INFO("Confidences: %ld Rects: %ld Labels: %ld", confidences.size(), src_rects.size(),
-             labels.size());
-    ROS_INFO("Number of pushbacks: %ld Number of skips: (%lld %lld)", numPushbacks, numSkips,
-             numSkips2);
-    numValuesOver4 = 0;
-    numValuesOver10 = 0;
-    for (std::vector<float>::iterator it = confidences.begin(); it != confidences.end(); ++it) {
-        if (*it > 0.4) {
-            numValuesOver4++;
-        }
-        if (*it > 1.0) {
-            numValuesOver10++;
-        }
-    }
-    ROS_INFO("Num Confidences >.4: %ld | >1.0: %ld", numValuesOver4, numValuesOver10);
-
-    // Evaluate results
-    for (int i = 0; i < numValuesOver4; i++) {
-        ROS_INFO("Label: %d Conf: %f", labels[i], confidences[i]);
-    }
-
-    cudaStreamDestroy(stream);
+    // cleanup
     for (void *buf : buffers) {
         cudaFree(buf);
     }

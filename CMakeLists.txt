@@ -36,28 +36,18 @@ endif()
 ## See http://ros.org/doc/api/catkin/html/user_guide/setup_dot_py.html
 # catkin_python_setup()
 
-#####################
-## Torch Libraries ##
-#####################
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
-
-set(Torch_DIR ../libtorch/share/cmake/Torch)
-find_package(Torch PATHS ${Torch_DIR} NO_DEFAULT_PATH REQUIRED)
-if (Torch_FOUND)
-    message(STATUS "Torch library found!")
-    message(STATUS "    include path: ${TORCH_INCLUDE_DIRS}" \n)
-else ()
-    message(FATAL_ERROR "Could not locate Torch" \n)
-endif()
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 
 #####################
-##    TensorRT     ##
+##  CUDA+TensorRT  ##
 #####################
 
-# Variables should have been set by libtorch already
+# CUDA
+find_package(CUDA REQUIRED)
+
 # CUDA
 if (NOT CUDA_TOOLKIT_ROOT_DIR)
+  MESSAGE(STATUS "Manually setting CUDA_TOOLKIT_ROOT_DIR")
   set(CUDA_TOOLKIT_ROOT_DIR /usr/local/cuda-11.4)
 endif()
 find_path(CUDA_INCLUDE_DIR cuda_runtime.h
@@ -192,6 +182,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${Qt5Widgets_INCLUDE_DIRS}
+  ${CUDA_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -250,8 +241,8 @@ foreach(NODE_NAME ${NODE_LIST})
   target_link_libraries(${NODE_NAME}
     ${catkin_LIBRARIES}
     ${OpenCV_LIBRARIES}
-    ${TORCH_LIBRARIES}
     ${TENSORRT_LIBRARY}
+    ${CUDA_LIBRARIES}
   )
 
   if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")

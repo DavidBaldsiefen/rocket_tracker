@@ -42,12 +42,18 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
+
+    uint64_t time = ros::Time::now().toNSec();
+
     std::vector<float> cpu_output(
         1 * 25200 *
         85); // =2142000. Can also be obtained by using engine->getBindingDimensions(outputIndex)
              // and then multiplying the size of each dimension
+
     cudaMemcpy(cpu_output.data(), outputBuffer, cpu_output.size() * sizeof(float),
                cudaMemcpyDeviceToHost); // this can be fastened by keeping stuff on gpu
+
+    uint64_t time2 = ros::Time::now().toNSec();
 
     // The Problem seems to be that the output is fp16 encoded, while "float" is fp32
 
@@ -95,6 +101,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         }
     }
 
+    uint64_t time3 = ros::Time::now().toNSec();
+
     // Evaluate results
     if (confidences.size() > 0) {
         float highest_conf = 0.0f;
@@ -116,6 +124,12 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         detection->width = (left - right);
         detection->height = (top - bottom);
     }
+
+    uint64_t time4 = ros::Time::now().toNSec();
+
+    if (TIME_LOGGING)
+        ROS_INFO("POST: (MemCpy: %.2lf ToArrays: %.2lf Eval: %.2lf)", (time2 - time) / 1000000.0,
+                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
 }
 
 rocket_tracker::detectionMSG processImage(cv::Mat img) {

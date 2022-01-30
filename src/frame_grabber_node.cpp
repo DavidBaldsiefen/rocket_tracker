@@ -32,7 +32,7 @@ int main(int argc, char **argv) {
     }
 
     // Get imagesize and video-path from arguments
-    int width = 480, height = 480;
+    int width = 640, height = 640;
     std::string videopath;
     if (argc == 2) {
         width = std::stoi(argv[1]);

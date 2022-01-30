@@ -21,7 +21,7 @@ nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 5;
 
-const bool TIME_LOGGING = false;
+const bool TIME_LOGGING = true;
 
 void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     if (img.empty()) {
@@ -52,7 +52,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         85); // =2142000. Can also be obtained by using engine->getBindingDimensions(outputIndex)
              // and then multiplying the size of each dimension
     cudaMemcpy(cpu_output.data(), outputBuffer, cpu_output.size() * sizeof(float),
-               cudaMemcpyDeviceToHost);
+               cudaMemcpyDeviceToHost); // this can be fastened by keeping stuff on gpu
 
     // The Problem seems to be that the output is fp16 encoded, while "float" is fp32
 
@@ -134,10 +134,10 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
     result.propability = 0.0;
     result.frameID = 0;
 
+    uint64_t time = ros::Time::now().toNSec();
+
     // Preparing input tensor
     preprocessImgTRT(img, buffers[inputIndex]);
-
-    uint64_t time = ros::Time::now().toNSec();
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -219,7 +219,7 @@ int main(int argc, char **argv) {
     ROS_INFO("Initializing TRT");
     long size;
     char *trtModelStream;
-    std::ifstream file("/home/david/NN-Models/yolov5/yolov5n.engine", std::ios::binary);
+    std::ifstream file(weightfilepath, std::ios::binary);
     if (file.good()) {
         file.seekg(0, file.end);
         size = file.tellg();

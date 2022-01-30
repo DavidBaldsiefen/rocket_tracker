@@ -5,10 +5,10 @@
 
     #Launch arguments
     <arg name="video" default=""/> #path to the input video
-    <arg name="weights" default="$(find rocket_tracker)/weights/480px_cpu.torchscript.pt"/> # path to the weightfile
+    <arg name="weights" default="$(find rocket_tracker)/weights/yolov5n.engine"/> # path to the weightfile
     <arg name="usecuda" default="true"/> # force the image processor to use cuda/cpu
-    <arg name="imgw" default="480"/> # image-width for the weightfile
-    <arg name="imgh" default="480"/> # image-height for the weightfile
+    <arg name="imgw" default="640"/> # image-width for the weightfile
+    <arg name="imgh" default="640"/> # image-height for the weightfile
     
     #Starting framegrabber node
     <node 

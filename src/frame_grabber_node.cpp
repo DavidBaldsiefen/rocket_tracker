@@ -12,7 +12,7 @@ bool initCapture(std::string videopath) {
     capture = cv::VideoCapture(videopath);
     if (!capture.isOpened()) {
         capture.release();
-        ROS_ERROR("Failed to open capture!");
+        ROS_ERROR("Failed to open video capture! Provided path: %s", videopath.c_str());
         return false;
     }
     // "publish" the video specs
@@ -31,18 +31,10 @@ int main(int argc, char **argv) {
         ros::console::notifyLoggerLevelsChanged();
     }
 
-    // Get imagesize and video-path from arguments
-    int width = 640, height = 640;
-    std::string videopath;
+    // Get video-path from arguments
+    std::string videopath = "";
     if (argc == 2) {
-        width = std::stoi(argv[1]);
-    } else if (argc == 3) {
-        width = std::stoi(argv[1]);
-        height = std::stoi(argv[2]);
-    } else if (argc == 4) {
-        width = std::stoi(argv[1]);
-        height = std::stoi(argv[2]);
-        videopath = argv[3];
+        videopath = argv[1];
     }
     if (videopath == "") {
         ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
@@ -50,9 +42,6 @@ int main(int argc, char **argv) {
     } else {
         ros::param::set("/rocket_tracker/videopath", videopath);
     }
-    ROS_INFO("Video will be scaled to %dx%d", width, height);
-    ros::param::set("/rocket_tracker/rescaled_width", width);
-    ros::param::set("/rocket_tracker/rescaled_height", height);
 
     // Creating image-transport publisher for rqt
     image_transport::ImageTransport it(nh);
@@ -85,8 +74,7 @@ int main(int argc, char **argv) {
         }
         ros::Time timestamp = ros::Time::now();
 
-        // resize videoframe
-        cv::resize(videoFrame, videoFrame, cv::Size(width, height));
+        // videoframe
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
         msg->header.seq = frame_id;

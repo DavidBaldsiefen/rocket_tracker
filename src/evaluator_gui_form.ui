@@ -197,7 +197,7 @@
           <number>300</number>
          </property>
          <property name="value">
-          <number>90</number>
+          <number>50</number>
          </property>
         </widget>
        </item>
@@ -216,6 +216,9 @@
        </item>
        <item row="4" column="0" colspan="3">
         <widget class="QCheckBox" name="ip_height_filter_cb">
+         <property name="enabled">
+          <bool>false</bool>
+         </property>
          <property name="text">
           <string>Use highest rocket (enable NMS)</string>
          </property>
@@ -234,9 +237,9 @@
       </widget>
      </item>
      <item row="0" column="1">
-      <widget class="QLabel" name="cuda_label">
+      <widget class="QLabel" name="trt_ready_label">
        <property name="text">
-        <string>Using CUDA: No</string>
+        <string>TensorRT Engine Ready: No</string>
        </property>
        <property name="alignment">
         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>

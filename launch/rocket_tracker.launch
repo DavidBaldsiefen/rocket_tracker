@@ -7,8 +7,6 @@
     <arg name="video" default=""/> #path to the input video
     <arg name="weights" default="$(find rocket_tracker)/weights/yolov5n.engine"/> # path to the weightfile
     <arg name="usecuda" default="true"/> # force the image processor to use cuda/cpu
-    <arg name="imgw" default="640"/> # image-width for the weightfile
-    <arg name="imgh" default="640"/> # image-height for the weightfile
     
     #Starting framegrabber node
     <node 
@@ -16,7 +14,7 @@
         type="frame_grabber_node" 
         name="FRAMEGRABBER"
         output="screen"
-	args="$(arg imgw) $(arg imgh) $(arg video)"/>
+	args="$(arg video)"/>
 
     #Starting image processor node
     <node 

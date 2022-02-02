@@ -300,6 +300,9 @@ int main(int argc, char **argv) {
 
     ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
              model_height);
+    ros::param::set("/rocket_tracker/model_width", model_width);
+    ros::param::set("/rocket_tracker/model_height", model_height);
+    ros::param::set("/rocket_tracker/trt_ready", true);
 
     ROS_INFO("TRT initialized");
 

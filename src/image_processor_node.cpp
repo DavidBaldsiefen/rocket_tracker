@@ -19,6 +19,7 @@ static int32_t outputIndex = 5;
 const bool TIME_LOGGING = true;
 
 void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
+    // inspired by https://zhuanlan.zhihu.com/p/344810135
     if (img.empty()) {
         ROS_WARN("Empty image received!");
     }
@@ -42,6 +43,8 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
+
+    // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
 
     uint64_t time = ros::Time::now().toNSec();
 

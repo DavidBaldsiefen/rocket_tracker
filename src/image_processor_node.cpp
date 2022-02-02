@@ -17,6 +17,8 @@ static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
 
 static int num_classes = 80; // COCO class count
+static int model_width = 640;
+static int model_height = 640;
 
 const bool TIME_LOGGING = true;
 
@@ -28,19 +30,20 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 
     uint64_t time = ros::Time::now().toNSec();
 
-    cv::resize(img, img, cv::Size(640, 640));
+    cv::resize(img, img, cv::Size(model_width, model_height));
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    static float inputArray[1 * 3 * 640 * 640];
+    int model_size = model_width * model_height;
+    float *inputArray = new float[1 * 3 * model_size];
     int i = 0;
-    for (int row = 0; row < 640; ++row) {
+    for (int row = 0; row < model_height; ++row) {
         uchar *uc_pixel = img.data + row * img.step;
-        for (int col = 0; col < 640; ++col) {
+        for (int col = 0; col < model_width; ++col) {
             inputArray[i] = (float)uc_pixel[2] / 255.0;
-            inputArray[i + 640 * 640] = (float)uc_pixel[1] / 255.0;
-            inputArray[i + 2 * 640 * 640] = (float)uc_pixel[0] / 255.0;
+            inputArray[model_size + i] = (float)uc_pixel[1] / 255.0;
+            inputArray[2 * model_size + i] = (float)uc_pixel[0] / 255.0;
             uc_pixel += 3;
             ++i;
         }
@@ -48,7 +51,7 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 
     uint64_t time3 = ros::Time::now().toNSec();
 
-    cudaMemcpy(inputBuffer, inputArray, 1 * 3 * 640 * 640 * sizeof(float),
+    cudaMemcpy(inputBuffer, inputArray, 1 * 3 * model_width * model_height * sizeof(float),
                cudaMemcpyHostToDevice); // maybe I should free this every time?
 
     uint64_t time4 = ros::Time::now().toNSec();
@@ -149,6 +152,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
 rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
+    uint64_t time0 = ros::Time::now().toNSec();
+
     rocket_tracker::detectionMSG result;
     result.centerX = 0.0;
     result.centerY = 0.0;
@@ -160,7 +165,7 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     uint64_t time = ros::Time::now().toNSec();
 
-    // Preparing input tensor
+    // Prepare input tensor
     preprocessImgTRT(img, buffers[inputIndex]);
 
     uint64_t time2 = ros::Time::now().toNSec();
@@ -173,9 +178,9 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     uint64_t time4 = ros::Time::now().toNSec();
     if (TIME_LOGGING)
-        ROS_INFO("PRE: %.2lf FWD: %.2lf PST: %.2lf", (time2 - time) / 1000000.0,
-                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
-
+        ROS_INFO("PRE: %.2lf FWD: %.2lf PST: %.2lf TOTAL: %.2lf", (time2 - time) / 1000000.0,
+                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0,
+                 (time4 - time0) / 1000000.0);
     return result;
 }
 
@@ -287,9 +292,14 @@ int main(int argc, char **argv) {
 
         if (i == outputIndex) {
             num_classes = dims.d[dims.nbDims - 1] - 5;
-            ROS_INFO("Expecting model with %d classes", num_classes);
+        } else if (i == inputIndex) {
+            model_width = dims.d[dims.nbDims - 2];
+            model_height = dims.d[dims.nbDims - 1];
         }
     }
+
+    ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
+             model_height);
 
     ROS_INFO("TRT initialized");
 

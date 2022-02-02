@@ -151,7 +151,7 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    context->enqueueV2(buffers, 0, nullptr);
+    context->executeV2(buffers); // Invoke synchronous inference
 
     uint64_t time3 = ros::Time::now().toNSec();
 

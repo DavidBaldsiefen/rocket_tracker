@@ -28,13 +28,17 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
 void Evaluator_GUI::setImage(cv::Mat img) {
     if (!img.empty()) {
 
-        // draw detection
+        // Confidence threshold is applied in image processor, so draw everything
         if (receivedDetection.propability != 0.0) {
-            cv::rectangle(img,
-                          cv::Rect(receivedDetection.centerX - receivedDetection.width / 2,
-                                   receivedDetection.centerY - receivedDetection.height / 2,
-                                   receivedDetection.width, receivedDetection.height),
-                          cv::Scalar(0, 255, 0));
+
+            // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
+            int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
+            int topY = receivedDetection.centerY - (receivedDetection.height / 2);
+            cv::Rect detectionRect =
+                cv::Rect(leftX, topY, receivedDetection.width, receivedDetection.height);
+
+            // draw rectangle to image
+            cv::rectangle(img, detectionRect, cv::Scalar(0, 255, 0));
 
             // note propability in GUI
             std::string str = "Probability of detected object: " +
@@ -44,6 +48,8 @@ void Evaluator_GUI::setImage(cv::Mat img) {
             ui.propability_label->setText(QString("Probability of detected object: ---"));
         }
 
+        // Push image to GUI
+        cv::resize(img, img, cv::Size(ui.imageLabel->width(), ui.imageLabel->height()));
         ui.imageLabel->setPixmap(QPixmap::fromImage(
             QImage(img.data, img.cols, img.rows, img.step, QImage::Format_RGB888)));
     }

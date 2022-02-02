@@ -93,8 +93,9 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
                 continue;
             }
 
-            rect = cv::Rect(cpu_output[index] * 1, cpu_output[index + 1] * 1,
-                            cpu_output[index + 2] * 1, cpu_output[index + 3] * 1);
+            // Model Output is [centerX, centerY, width, height] => rectangle based around center
+            rect = cv::Rect(cpu_output[index], cpu_output[index + 1], cpu_output[index + 2],
+                            cpu_output[index + 3]);
             locations.push_back(rect);
 
             labels.emplace_back(k - labelStartIndex);
@@ -118,14 +119,11 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         }
         detection->propability = highest_conf;
         detection->classID = labels[highest_conf_index];
-        int left = locations[highest_conf_index].x;        // * frame.cols / width;
-        int top = locations[highest_conf_index].y;         // * frame.rows / height;
-        int right = locations[highest_conf_index].width;   // * frame.cols / width;
-        int bottom = locations[highest_conf_index].height; // * frame.rows / height;
-        detection->centerX = left + (right - left) / 2;
-        detection->centerY = top + (bottom - top) / 2;
-        detection->width = (left - right);
-        detection->height = (top - bottom);
+        cv::Rect outRect = locations[highest_conf_index];
+        detection->centerX = outRect.x;     // x1
+        detection->centerY = outRect.y;     // y1
+        detection->width = outRect.width;   // x2
+        detection->height = outRect.height; // y2
     }
 
     uint64_t time4 = ros::Time::now().toNSec();

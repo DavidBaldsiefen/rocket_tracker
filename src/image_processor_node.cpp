@@ -14,7 +14,9 @@ static ros::Publisher detectionPublisher;
 static void *buffers[5];
 nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
-static int32_t outputIndex = 5;
+static int32_t outputIndex = 4;
+
+static int num_classes = 80; // COCO class count
 
 const bool TIME_LOGGING = true;
 
@@ -48,10 +50,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     uint64_t time = ros::Time::now().toNSec();
 
-    std::vector<float> cpu_output(
-        1 * 25200 *
-        85); // =2142000. Can also be obtained by using engine->getBindingDimensions(outputIndex)
-             // and then multiplying the size of each dimension
+    std::vector<float> cpu_output(1 * 25200 * (5 + num_classes));
 
     cudaMemcpy(cpu_output.data(), outputBuffer, cpu_output.size() * sizeof(float),
                cudaMemcpyDeviceToHost); // this can be fastened by keeping stuff on gpu
@@ -62,7 +61,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     unsigned long outputSize = cpu_output.size();
 
-    unsigned long dimensions = 85; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
+    unsigned long dimensions =
+        5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
     unsigned long rows = outputSize / dimensions; // 25.200
     unsigned long confidenceIndex = 4;
     unsigned long labelStartIndex = 5;
@@ -250,17 +250,33 @@ int main(int argc, char **argv) {
     assert(context != nullptr);
     delete[] trtModelStream;
 
+    // Allocate memory for every engine binding
     inputIndex = engine->getBindingIndex("images");
     outputIndex = engine->getBindingIndex("output");
+    ROS_INFO("Reading engine bindings:");
     for (int i = 0; i < 5; i++) {
-        size_t size = 1;
-        nvinfer1::Dims dims = engine->getBindingDimensions(i);
-        for (size_t i = 0; i < dims.nbDims; ++i) {
-            size *= dims.d[i];
-        }
-        auto binding_size = size * 1 * sizeof(float);
 
+        std::string dimension_desc = " [";
+        size_t size = 1;
+
+        // Multiply every dimension of each binding to get its total size
+        nvinfer1::Dims dims = engine->getBindingDimensions(i);
+        for (size_t j = 0; j < dims.nbDims; ++j) {
+            size *= dims.d[j];
+            dimension_desc += std::to_string(dims.d[j]) + " ";
+        }
+
+        auto binding_size = size * 1 * sizeof(float);
         cudaMalloc(&buffers[i], binding_size);
+
+        dimension_desc.pop_back();
+        dimension_desc += "] (\"" + std::string(engine->getBindingName(i)) + "\")";
+        ROS_INFO("%s", dimension_desc.c_str());
+
+        if (i == outputIndex) {
+            num_classes = dims.d[dims.nbDims - 1] - 5;
+            ROS_INFO("Expecting model with %d classes", num_classes);
+        }
     }
 
     ROS_INFO("TRT initialized");

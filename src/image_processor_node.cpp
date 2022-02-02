@@ -25,8 +25,13 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     if (img.empty()) {
         ROS_WARN("Empty image received!");
     }
+
+    uint64_t time = ros::Time::now().toNSec();
+
     cv::resize(img, img, cv::Size(640, 640));
     cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
+
+    uint64_t time2 = ros::Time::now().toNSec();
 
     static float inputArray[1 * 3 * 640 * 640];
     int i = 0;
@@ -40,8 +45,17 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
             ++i;
         }
     }
+
+    uint64_t time3 = ros::Time::now().toNSec();
+
     cudaMemcpy(inputBuffer, inputArray, 1 * 3 * 640 * 640 * sizeof(float),
                cudaMemcpyHostToDevice); // maybe I should free this every time?
+
+    uint64_t time4 = ros::Time::now().toNSec();
+
+    if (TIME_LOGGING)
+        ROS_INFO("PRE: (CV: %.2lf ArrayPrep: %.2lf memcpy: %.2lf)", (time2 - time) / 1000000.0,
+                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {

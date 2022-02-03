@@ -87,74 +87,43 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    unsigned long outputSize = cpu_output.size();
-
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    unsigned long rows = outputSize / dimensions; // 25.200
+    unsigned long rows = cpu_output.size() / dimensions; // 25.200
     unsigned long confidenceIndex = 4;
     unsigned long labelStartIndex = 5;
 
-    std::vector<int> labels;
-    std::vector<float> confidences;
-    std::vector<cv::Rect> locations;
-
-    cv::Rect rect;
-    cv::Vec4f location;
-    long numPushbacks = 0;
-    long long numSkips = 0;
-    long long numSkips2 = 0;
-
+    int highest_conf_index = 0;
+    int highest_conf_label = 0;
+    float highest_conf = 0.0f;
     for (unsigned long i = 0; i < rows; ++i) {
         unsigned long index = i * dimensions;
 
         if (cpu_output[index + confidenceIndex] <= 0.4f) {
-            numSkips++;
             continue;
         }
 
         for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-            cpu_output[index + j] = cpu_output[index + j] * cpu_output[index + confidenceIndex];
-        }
-
-        for (unsigned long k = labelStartIndex; k < dimensions; ++k) {
-            if (cpu_output[index + k] <= 0.5f) {
-                numSkips2++;
-                continue;
+            float combined_conf = cpu_output[index + j] * cpu_output[index + confidenceIndex];
+            if (combined_conf > highest_conf) {
+                highest_conf = combined_conf;
+                highest_conf_index = index;
+                highest_conf_label = j;
             }
-
-            // Model Output is [centerX, centerY, width, height] => rectangle based around center
-            rect = cv::Rect(cpu_output[index], cpu_output[index + 1], cpu_output[index + 2],
-                            cpu_output[index + 3]);
-            locations.push_back(rect);
-
-            labels.emplace_back(k - labelStartIndex);
-
-            confidences.emplace_back(cpu_output[index + k]);
-
-            numPushbacks++;
         }
     }
 
     uint64_t time3 = ros::Time::now().toNSec();
 
     // Evaluate results
-    if (confidences.size() > 0) {
-        float highest_conf = 0.0f;
-        int highest_conf_index = 0;
-        for (size_t i = 0; i < confidences.size(); i++) {
-            if (confidences[i] > highest_conf) {
-                highest_conf = confidences[i];
-                highest_conf_index = i;
-            }
-        }
-        detection->propability = highest_conf;
-        detection->classID = labels[highest_conf_index];
-        cv::Rect outRect = locations[highest_conf_index];
-        detection->centerX = outRect.x;     // x1
-        detection->centerY = outRect.y;     // y1
-        detection->width = outRect.width;   // x2
-        detection->height = outRect.height; // y2
+    if (highest_conf > 0.4f) {
+
+        detection->propability = cpu_output[highest_conf_index + confidenceIndex];
+        detection->classID = cpu_output[highest_conf_index + labelStartIndex + highest_conf_label];
+        detection->centerX = cpu_output[highest_conf_index];
+        detection->centerY = cpu_output[highest_conf_index + 1];
+        detection->width = cpu_output[highest_conf_index + 2];
+        detection->height = cpu_output[highest_conf_index + 3];
     }
 
     uint64_t time4 = ros::Time::now().toNSec();

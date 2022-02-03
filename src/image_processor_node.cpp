@@ -227,7 +227,7 @@ class Logger : public nvinfer1::ILogger {
 
 int main(int argc, char **argv) {
 
-    ros::init(argc, argv, "FRAMEGRABBER");
+    ros::init(argc, argv, "IMAGEPROCESSOR");
     ros::NodeHandle nh("~");
 
     // Get weightfile path from arguments
@@ -260,6 +260,7 @@ int main(int argc, char **argv) {
         assert(trtModelStream);
         file.read(trtModelStream, size);
         file.close();
+        ROS_INFO("Loaded engine from %s", weightfilepath.c_str());
     }
 
     nvinfer1::IRuntime *runtime = nvinfer1::createInferRuntime(logger);

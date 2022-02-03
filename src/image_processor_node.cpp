@@ -20,7 +20,19 @@ static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
 
+static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
+
+template <typename... Args> std::string string_format(const std::string &format, Args... args) {
+    int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1; // Extra space for '\0'
+    if (size_s <= 0) {
+        throw std::runtime_error("Error during formatting.");
+    }
+    auto size = static_cast<size_t>(size_s);
+    auto buf = std::make_unique<char[]>(size);
+    std::snprintf(buf.get(), size, format.c_str(), args...);
+    return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
+}
 
 void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     // inspired by https://zhuanlan.zhihu.com/p/344810135
@@ -57,8 +69,9 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     uint64_t time4 = ros::Time::now().toNSec();
 
     if (TIME_LOGGING)
-        ROS_INFO("PRE: (CV: %.2lf ArrayPrep: %.2lf memcpy: %.2lf)", (time2 - time) / 1000000.0,
-                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
+        time_logging_string +=
+            string_format("[PRE %.2lf %.2lf %.2lf]", (time2 - time) / 1000000.0,
+                          (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
@@ -147,8 +160,9 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     uint64_t time4 = ros::Time::now().toNSec();
 
     if (TIME_LOGGING)
-        ROS_INFO("POST: (MemCpy: %.2lf ToArrays: %.2lf Eval: %.2lf)", (time2 - time) / 1000000.0,
-                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
+        time_logging_string +=
+            string_format("[PST %.2lf %.2lf %.2lf]", (time2 - time) / 1000000.0,
+                          (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
 }
 
 rocket_tracker::detectionMSG processImage(cv::Mat img) {
@@ -164,6 +178,7 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
     result.propability = 0.0;
     result.frameID = 0;
 
+    time_logging_string = "";
     uint64_t time = ros::Time::now().toNSec();
 
     // Prepare input tensor
@@ -178,10 +193,14 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
     postprocessTRTdetections(buffers[outputIndex], &result);
 
     uint64_t time4 = ros::Time::now().toNSec();
-    if (TIME_LOGGING)
-        ROS_INFO("PRE: %.2lf FWD: %.2lf PST: %.2lf TOTAL: %.2lf", (time2 - time) / 1000000.0,
-                 (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0,
-                 (time4 - time0) / 1000000.0);
+    if (TIME_LOGGING) {
+        ROS_INFO("%s", time_logging_string.c_str());
+        time_logging_string = string_format(
+            "PRE: %.2lf FWD: %.2lf PST: %.2lf TOTAL: %.2lf", (time2 - time) / 1000000.0,
+            (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0, (time4 - time0) / 1000000.0);
+
+        ROS_INFO("%s", time_logging_string.c_str());
+    }
     return result;
 }
 

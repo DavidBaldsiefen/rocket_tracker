@@ -35,7 +35,7 @@ template <typename... Args> std::string string_format(const std::string &format,
 }
 
 void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
-    // inspired by https://zhuanlan.zhihu.com/p/344810135
+    // thanks to https://zhuanlan.zhihu.com/p/344810135
     if (img.empty()) {
         ROS_WARN("Empty image received!");
     }
@@ -47,24 +47,23 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    int model_size = model_width * model_height;
-    float *inputArray = new float[1 * 3 * model_size];
-    int i = 0;
-    for (int row = 0; row < model_height; ++row) {
-        uchar *uc_pixel = img.data + row * img.step;
-        for (int col = 0; col < model_width; ++col) {
-            inputArray[i] = (float)uc_pixel[2] / 255.0;
-            inputArray[model_size + i] = (float)uc_pixel[1] / 255.0;
-            inputArray[2 * model_size + i] = (float)uc_pixel[0] / 255.0;
-            uc_pixel += 3;
-            ++i;
-        }
-    }
+    static int model_size = model_width * model_height;
+    static float *inputArray = new float[1 * 3 * 640 * 640];
+
+    // for each is significantly faster than all other methods to traverse over the cv::Mat (read
+    // online and confirmed myself)
+    img.forEach<cv::Vec3b>([](cv::Vec3b &p, const int *position) -> void {
+        // p[0-2] contains rgb data, position[0-1] the xy location
+        int index = model_height * position[0] + position[1];
+        inputArray[index] = p[2] / 255.0f;
+        inputArray[model_size + index] = p[1] / 255.0f;
+        inputArray[2 * model_size + index] = p[0] / 255.0f;
+    });
 
     uint64_t time3 = ros::Time::now().toNSec();
 
-    cudaMemcpy(inputBuffer, inputArray, 1 * 3 * model_width * model_height * sizeof(float),
-               cudaMemcpyHostToDevice); // maybe I should free this every time?
+    static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
+    cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
 
     uint64_t time4 = ros::Time::now().toNSec();
 
@@ -113,8 +112,6 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         }
     }
 
-    uint64_t time3 = ros::Time::now().toNSec();
-
     // Evaluate results
     if (highest_conf > 0.4f) {
 
@@ -126,12 +123,11 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         detection->height = cpu_output[highest_conf_index + 3];
     }
 
-    uint64_t time4 = ros::Time::now().toNSec();
+    uint64_t time3 = ros::Time::now().toNSec();
 
     if (TIME_LOGGING)
-        time_logging_string +=
-            string_format("[PST %.2lf %.2lf %.2lf]", (time2 - time) / 1000000.0,
-                          (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
+        time_logging_string += string_format("[PST %.2lf %.2lf]", (time2 - time) / 1000000.0,
+                                             (time3 - time2) / 1000000.0);
 }
 
 rocket_tracker::detectionMSG processImage(cv::Mat img) {

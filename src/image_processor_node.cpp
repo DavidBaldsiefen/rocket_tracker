@@ -291,7 +291,13 @@ int main(int argc, char **argv) {
         }
 
         auto binding_size = size * 1 * sizeof(float);
-        cudaMalloc(&buffers[i], binding_size);
+        if (cudaMallocHost(&buffers[i], binding_size) != cudaSuccess) {
+            ROS_WARN("Failed to allocate pinned memory! Switching to pageable memory instead.");
+            if (cudaMalloc(&buffers[i], binding_size) != cudaSuccess) {
+                ROS_ERROR("Could not allocate cuda memory.");
+                return 0;
+            }
+        }
 
         dimension_desc.pop_back();
         dimension_desc += "] (\"" + std::string(engine->getBindingName(i)) + "\")";

@@ -74,7 +74,8 @@ int main(int argc, char **argv) {
         }
         ros::Time timestamp = ros::Time::now();
 
-        // videoframe
+        // publish videoframe
+        cv::cvtColor(videoFrame, videoFrame, cv::COLOR_BGR2RGB);
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
         msg->header.seq = frame_id;

@@ -43,7 +43,6 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     uint64_t time = ros::Time::now().toNSec();
 
     cv::resize(img, img, cv::Size(model_width, model_height));
-    cv::cvtColor(img, img, cv::COLOR_BGR2RGB);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -54,10 +53,13 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     // online and confirmed myself)
     img.forEach<cv::Vec3b>([](cv::Vec3b &p, const int *position) -> void {
         // p[0-2] contains rgb data, position[0-1] the xy location
+
+        // Incoming data is already RGB, but the order could be changed here too by changing index
+        // of p
         int index = model_height * position[0] + position[1];
-        inputArray[index] = p[2] / 255.0f;
+        inputArray[index] = p[0] / 255.0f;
         inputArray[model_size + index] = p[1] / 255.0f;
-        inputArray[2 * model_size + index] = p[0] / 255.0f;
+        inputArray[2 * model_size + index] = p[2] / 255.0f;
     });
 
     uint64_t time3 = ros::Time::now().toNSec();

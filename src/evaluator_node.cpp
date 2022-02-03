@@ -101,11 +101,13 @@ void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
 void pushRosParamsToGui(Ui_Form *ui) {
     double input_fps, input_width, input_height, rescaled_width, rescaled_height;
     bool trtReady = false;
+    std::string model_datatype;
     bool retVal = false;
     retVal |= ros::param::get("/rocket_tracker/input_fps", input_fps);
     retVal |= ros::param::get("/rocket_tracker/input_width", input_width);
     retVal |= ros::param::get("/rocket_tracker/input_height", input_height);
     retVal |= ros::param::get("/rocket_tracker/trt_ready", trtReady);
+    retVal |= ros::param::get("/rocket_tracker/model_datatype", model_datatype);
     retVal |= ros::param::get("/rocket_tracker/model_width", rescaled_width);
     retVal |= ros::param::get("/rocket_tracker/model_height", rescaled_height);
     if (retVal) {
@@ -114,8 +116,8 @@ void pushRosParamsToGui(Ui_Form *ui) {
                           "fps => rescaled to " + std::to_string((int)rescaled_width) + "x" +
                           std::to_string((int)rescaled_height);
         ui->video_details->setText(QString::fromStdString(str));
-        str = "TensorRT Engine Ready: " + std::string(trtReady ? "Yes" : "No");
-        ui->trt_ready_label->setText(QString::fromStdString(str));
+        str = "Engine Type: " + model_datatype + " Ready: " + std::string(trtReady ? "Yes" : "No");
+        ui->trt_label->setText(QString::fromStdString(str));
     }
 }
 

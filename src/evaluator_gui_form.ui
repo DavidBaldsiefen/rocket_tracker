@@ -237,9 +237,9 @@
       </widget>
      </item>
      <item row="0" column="1">
-      <widget class="QLabel" name="trt_ready_label">
+      <widget class="QLabel" name="trt_label">
        <property name="text">
-        <string>TensorRT Engine Ready: No</string>
+        <string>Engine Type: FP?? Ready: No</string>
        </property>
        <property name="alignment">
         <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>

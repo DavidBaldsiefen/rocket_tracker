@@ -20,7 +20,7 @@ static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
 
-const bool TIME_LOGGING = true;
+static bool TIME_LOGGING = false;
 
 void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     // inspired by https://zhuanlan.zhihu.com/p/344810135
@@ -74,8 +74,6 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    // The Problem seems to be that the output is fp16 encoded, while "float" is fp32
-
     unsigned long outputSize = cpu_output.size();
 
     unsigned long dimensions =
@@ -93,8 +91,10 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     long numPushbacks = 0;
     long long numSkips = 0;
     long long numSkips2 = 0;
+
     for (unsigned long i = 0; i < rows; ++i) {
         unsigned long index = i * dimensions;
+
         if (cpu_output[index + confidenceIndex] <= 0.4f) {
             numSkips++;
             continue;
@@ -118,6 +118,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             labels.emplace_back(k - labelStartIndex);
 
             confidences.emplace_back(cpu_output[index + k]);
+
             numPushbacks++;
         }
     }
@@ -244,6 +245,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+
     // TensorRT
     ROS_INFO("Initializing TRT");
     long size;
@@ -262,8 +265,10 @@ int main(int argc, char **argv) {
     nvinfer1::IRuntime *runtime = nvinfer1::createInferRuntime(logger);
     assert(runtime != nullptr);
     nvinfer1::ICudaEngine *engine = runtime->deserializeCudaEngine(trtModelStream, size);
+
     assert(engine != nullptr);
     context = engine->createExecutionContext();
+
     assert(context != nullptr);
     delete[] trtModelStream;
 
@@ -288,7 +293,7 @@ int main(int argc, char **argv) {
 
         dimension_desc.pop_back();
         dimension_desc += "] (\"" + std::string(engine->getBindingName(i)) + "\")";
-        ROS_INFO("%s", dimension_desc.c_str());
+        dimension_desc += " Datatype: " + std::to_string((int32_t)engine->getBindingDataType(i));
 
         if (i == outputIndex) {
             num_classes = dims.d[dims.nbDims - 1] - 5;
@@ -296,6 +301,8 @@ int main(int argc, char **argv) {
             model_width = dims.d[dims.nbDims - 2];
             model_height = dims.d[dims.nbDims - 1];
         }
+
+        ROS_INFO("%s", dimension_desc.c_str());
     }
 
     ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
@@ -303,6 +310,10 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/model_width", model_width);
     ros::param::set("/rocket_tracker/model_height", model_height);
     ros::param::set("/rocket_tracker/trt_ready", true);
+
+    nvinfer1::DataType modelDatatype = engine->getBindingDataType(inputIndex);
+    ros::param::set("/rocket_tracker/model_datatype",
+                    modelDatatype == nvinfer1::DataType::kHALF ? "FP16" : "FP32");
 
     ROS_INFO("TRT initialized");
 

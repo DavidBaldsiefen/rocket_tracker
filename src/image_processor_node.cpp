@@ -79,35 +79,46 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     uint64_t time = ros::Time::now().toNSec();
 
-    std::vector<float> cpu_output(1 * 25200 * (5 + num_classes));
+    static size_t output_size = 1 * 25200 * (5 + num_classes);
+    static size_t output_buffer_size = output_size * sizeof(float);
+    std::vector<float> cpu_output(output_size);
 
-    cudaMemcpy(cpu_output.data(), outputBuffer, cpu_output.size() * sizeof(float),
+    cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size,
                cudaMemcpyDeviceToHost); // this can be fastened by keeping stuff on gpu
 
     uint64_t time2 = ros::Time::now().toNSec();
 
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    unsigned long rows = cpu_output.size() / dimensions; // 25.200
+    unsigned long numPredictions = cpu_output.size() / dimensions; // 25.200
     unsigned long confidenceIndex = 4;
     unsigned long labelStartIndex = 5;
 
     int highest_conf_index = 0;
     int highest_conf_label = 0;
     float highest_conf = 0.0f;
-    for (unsigned long i = 0; i < rows; ++i) {
-        unsigned long index = i * dimensions;
-
-        if (cpu_output[index + confidenceIndex] <= 0.4f) {
+    for (unsigned long index = 0; index < output_size; index += dimensions) {
+        float confidence = cpu_output[index + confidenceIndex];
+        if (confidence <= 0.4f) {
             continue;
         }
 
-        for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-            float combined_conf = cpu_output[index + j] * cpu_output[index + confidenceIndex];
-            if (combined_conf > highest_conf) {
-                highest_conf = combined_conf;
+        // for multiple classes, combine the confidence with class confidences
+        // for single class models, this step can be skipped
+        if (num_classes > 1) {
+            for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
+                float combined_conf = cpu_output[index + j] * confidence;
+                if (combined_conf > highest_conf) {
+                    highest_conf = combined_conf;
+                    highest_conf_index = index;
+                    highest_conf_label = j;
+                }
+            }
+        } else {
+            if (confidence > highest_conf) {
+                highest_conf = cpu_output[index + confidenceIndex];
                 highest_conf_index = index;
-                highest_conf_label = j;
+                highest_conf_label = 6; // 5 + 1
             }
         }
     }
@@ -116,7 +127,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     if (highest_conf > 0.4f) {
 
         detection->propability = cpu_output[highest_conf_index + confidenceIndex];
-        detection->classID = cpu_output[highest_conf_index + labelStartIndex + highest_conf_label];
+        detection->classID = cpu_output[highest_conf_index + highest_conf_label];
         detection->centerX = cpu_output[highest_conf_index];
         detection->centerY = cpu_output[highest_conf_index + 1];
         detection->width = cpu_output[highest_conf_index + 2];

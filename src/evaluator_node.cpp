@@ -79,6 +79,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     if (!img->image.empty()) {
         receivedFrame = img->image;
+        cv::cvtColor(receivedFrame, receivedFrame, cv::COLOR_BGR2RGB);
         receivedFrameID = msg->header.seq;
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");

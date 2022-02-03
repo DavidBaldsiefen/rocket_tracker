@@ -60,9 +60,9 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
         // Incoming data is already RGB, but the order could be changed here too by changing index
         // of p
         int index = model_height * position[0] + position[1];
-        inputArray[index] = p[0] / 255.0f;
+        inputArray[index] = p[2] / 255.0f;
         inputArray[model_size + index] = p[1] / 255.0f;
-        inputArray[2 * model_size + index] = p[2] / 255.0f;
+        inputArray[2 * model_size + index] = p[0] / 255.0f;
     });
 
     uint64_t time3 = ros::Time::now().toNSec();
@@ -89,7 +89,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     std::vector<float> cpu_output(output_size);
 
     cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size,
-               cudaMemcpyDeviceToHost); // this can be fastened by keeping stuff on gpu
+               cudaMemcpyDeviceToHost); // Could postprocessing be done on gpu?
 
     uint64_t time2 = ros::Time::now().toNSec();
 

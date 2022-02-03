@@ -42,7 +42,10 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
 
     uint64_t time = ros::Time::now().toNSec();
 
-    cv::resize(img, img, cv::Size(model_width, model_height));
+    // only resize down
+    if (img.rows > model_height || img.cols > model_width) {
+        cv::resize(img, img, cv::Size(model_width, model_height));
+    }
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -118,7 +121,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             }
         } else {
             if (confidence > highest_conf) {
-                highest_conf = cpu_output[index + confidenceIndex];
+                highest_conf = confidence;
                 highest_conf_index = index;
                 highest_conf_label = 6; // 5 + 1
             }
@@ -128,7 +131,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     // Evaluate results
     if (highest_conf > 0.4f) {
 
-        detection->propability = cpu_output[highest_conf_index + confidenceIndex];
+        detection->propability = highest_conf;
         detection->classID = cpu_output[highest_conf_index + highest_conf_label];
         detection->centerX = cpu_output[highest_conf_index];
         detection->centerY = cpu_output[highest_conf_index + 1];
@@ -202,6 +205,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
         detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
         detection.timestamp = time / 1000000.0;
+        detection.frameID = msg->header.seq;
         // total time between framecapture and detection being published:
         double detectionTime = (ros::Time::now().toNSec() - msg->header.stamp.toNSec()) / 1000000.0;
         if (TIME_LOGGING)

@@ -9,6 +9,7 @@
 #include <ros/ros.h>
 
 static cv::Mat receivedFrame;
+static uint receivedFrameID;
 static rocket_tracker::detectionMSG receivedDetection;
 static Ui_Form *ui;
 
@@ -29,13 +30,24 @@ void Evaluator_GUI::setImage(cv::Mat img) {
     if (!img.empty()) {
 
         // Confidence threshold is applied in image processor, so draw everything
-        if (receivedDetection.propability != 0.0) {
+        // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
+        if (receivedDetection.propability != 0.0 && receivedFrameID == receivedDetection.frameID) {
 
             // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
             int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
             int topY = receivedDetection.centerY - (receivedDetection.height / 2);
             cv::Rect detectionRect =
                 cv::Rect(leftX, topY, receivedDetection.width, receivedDetection.height);
+
+            // the detection coordinates relate to the models coordinate system
+            // however, the iage might have been scaled down (upscaling does not happen)
+            int model_width = 640, model_height = 640;
+            ros::param::getCached("/rocket_tracker/model_width", model_width);
+            ros::param::getCached("/rocket_tracker/model_height", model_height);
+            if (img.cols > model_width || img.rows > model_height) {
+                detectionRect.x = img.cols * detectionRect.x / model_width;
+                detectionRect.y = img.rows * detectionRect.y / model_height;
+            }
 
             // draw rectangle to image
             cv::rectangle(img, detectionRect, cv::Scalar(0, 255, 0));
@@ -67,6 +79,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     if (!img->image.empty()) {
         receivedFrame = img->image;
+        receivedFrameID = msg->header.seq;
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }

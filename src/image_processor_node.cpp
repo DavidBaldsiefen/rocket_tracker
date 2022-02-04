@@ -228,6 +228,44 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     }
 }
 
+void inferRandomMats(int iterations) {
+    // Infers random matrices over n iterations
+
+    rocket_tracker::detectionMSG detection;
+
+    uint64_t pre = 0, fwd = 0, pst = 0;
+
+    for (int i = 0; i < iterations; i++) {
+        // create random matrix
+        cv::Mat mat(model_width, model_height, CV_8UC3); // Or: Mat mat(2, 4, CV_64FC1);
+        double mean = 0.0;
+        double stddev = 500.0 / 3.0; // 99.7% of values will be inside [-500, +500] interval
+        cv::randn(mat, cv::Scalar(0.0, 0.0, 0.0), cv::Scalar(255 / 3.0, 255 / 3.0, 255 / 3.0));
+
+        uint64_t time1 = ros::Time::now().toNSec();
+        preprocessImgTRT(mat, buffers[inputIndex]);
+        uint64_t time2 = ros::Time::now().toNSec();
+        context->executeV2(buffers); // Invoke synchronous inference
+        uint64_t time3 = ros::Time::now().toNSec();
+        postprocessTRTdetections(buffers[outputIndex], &detection);
+        uint64_t time4 = ros::Time::now().toNSec();
+
+        pre += time2 - time1;
+        fwd += time3 - time2;
+        pst += time4 - time3;
+    }
+
+    // Evaluate timings
+    double total = (pre + fwd + pst) / 1000000.0;
+    double avgtotal = (total / iterations);
+    double avgpre = ((double)pre / iterations) / 1000000.0;
+    double avgfwd = ((double)fwd / iterations) / 1000000.0;
+    double avgpst = ((double)pst / iterations) / 1000000.0;
+    ROS_INFO(
+        "Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [%.2lf %.2lf %.2lf])",
+        iterations, total, avgtotal, avgpre, avgfwd, avgpst);
+}
+
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override {
 
@@ -338,6 +376,8 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/trt_ready", true);
 
     ROS_INFO("TRT initialized");
+    ROS_INFO("Warming up over 200 iterations");
+    inferRandomMats(200);
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);

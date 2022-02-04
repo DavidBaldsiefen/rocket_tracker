@@ -24,7 +24,7 @@
         type="image_processor_node" 
         name="IMAGEPROCESSOR"
         output="screen"
-        args="$(arg weights) $(arg usecuda)"/>
+        args="$(arg weights)"/>
 
     #Starting evaluator node
     <node 

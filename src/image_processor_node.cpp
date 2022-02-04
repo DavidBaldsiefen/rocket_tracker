@@ -325,15 +325,17 @@ int main(int argc, char **argv) {
         ROS_INFO("%s", dimension_desc.c_str());
     }
 
+    if (engine->getBindingDataType(inputIndex) != nvinfer1::DataType::kFLOAT ||
+        engine->getBindingDataType(outputIndex) != nvinfer1::DataType::kFLOAT) {
+        ROS_WARN("Engine input and/or output datatype is not float. Please change to a different "
+                 "engine");
+    }
+
     ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
              model_height);
     ros::param::set("/rocket_tracker/model_width", model_width);
     ros::param::set("/rocket_tracker/model_height", model_height);
     ros::param::set("/rocket_tracker/trt_ready", true);
-
-    nvinfer1::DataType modelDatatype = engine->getBindingDataType(inputIndex);
-    ros::param::set("/rocket_tracker/model_datatype",
-                    modelDatatype == nvinfer1::DataType::kHALF ? "FP16" : "FP32");
 
     ROS_INFO("TRT initialized");
 

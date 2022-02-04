@@ -15,6 +15,7 @@ static void **buffers;
 nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
+static int64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
 
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
@@ -83,7 +84,6 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     uint64_t time = ros::Time::now().toNSec();
 
-    static size_t output_size = 1 * 25200 * (5 + num_classes);
     static size_t output_buffer_size = output_size * sizeof(float);
     std::vector<float> cpu_output(output_size);
 
@@ -302,6 +302,7 @@ int main(int argc, char **argv) {
 
         if (i == outputIndex) {
             num_classes = dims.d[dims.nbDims - 1] - 5;
+            output_size = size;
         } else if (i == inputIndex) {
             model_width = dims.d[dims.nbDims - 2];
             model_height = dims.d[dims.nbDims - 1];

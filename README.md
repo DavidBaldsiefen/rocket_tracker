@@ -38,6 +38,6 @@ The following launch arguments are available:
 
 In general, any explicitly single batch TensorRT engine with 3-channel input bindings can be fed into the software. E.g. the input bindings could look like this: [1x3x640x640]. The software will automatically scale down the image if necessary. The software supports FP32 and FP16 engines, provided that the input and output channels are in FP32 precision.
 
-However, the engine is currently only able to interpret output that equals the YOLO format. Specifically, this means that each detections is in the format [x, y, width, height, box_confidence, class_confidence_1, class_confidence_2, ....]. The model is able to identify the number of classes, but expects exactly 25200 such detections.
+However, the engine is currently only able to interpret output that equals the YOLO format. Specifically, this means that each detections is in the format [x, y, width, height, box_confidence, class_confidence_1, class_confidence_2, ....]. The model is able to identify the number of classes automatically.
 
 For single-class engines, the software will always choose the detection with the highest box_confidence. For multi-class engines, the box_confidence will be multiplied with each class_confidence to get the final value.

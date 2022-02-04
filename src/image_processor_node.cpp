@@ -11,7 +11,7 @@
 
 static ros::Publisher detectionPublisher;
 
-static void *buffers[5];
+static void **buffers;
 nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
@@ -24,6 +24,7 @@ static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
 
 template <typename... Args> std::string string_format(const std::string &format, Args... args) {
+    // from https://stackoverflow.com/a/26221725
     int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1; // Extra space for '\0'
     if (size_s <= 0) {
         throw std::runtime_error("Error during formatting.");
@@ -50,15 +51,13 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
     uint64_t time2 = ros::Time::now().toNSec();
 
     static int model_size = model_width * model_height;
-    static float *inputArray = new float[1 * 3 * 640 * 640];
+    static float *inputArray = new float[1 * 3 * model_size];
 
     // for each is significantly faster than all other methods to traverse over the cv::Mat (read
     // online and confirmed myself)
     img.forEach<cv::Vec3b>([](cv::Vec3b &p, const int *position) -> void {
-        // p[0-2] contains rgb data, position[0-1] the xy location
-
-        // Incoming data is already RGB, but the order could be changed here too by changing index
-        // of p
+        // p[0-2] contains bgr data, position[0-1] the row-column location
+        // Incoming data is BGR, so convert to RGB in the process
         int index = model_height * position[0] + position[1];
         inputArray[index] = p[2] / 255.0f;
         inputArray[model_size + index] = p[1] / 255.0f;
@@ -162,7 +161,6 @@ rocket_tracker::detectionMSG processImage(cv::Mat img) {
     time_logging_string = "";
     uint64_t time = ros::Time::now().toNSec();
 
-    // Prepare input tensor
     preprocessImgTRT(img, buffers[inputIndex]);
 
     uint64_t time2 = ros::Time::now().toNSec();
@@ -197,7 +195,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     last_frame_id = msg->header.seq;
 
     if (!img->image.empty()) {
-        // TODO: sync frame_ids to detected coordinates
+
         uint64_t time = ros::Time::now().toNSec();
 
         rocket_tracker::detectionMSG detection;
@@ -219,9 +217,13 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override {
-        // suppress info-level messages
-        if (severity <= Severity::kWARNING) {
-            ROS_INFO("[NvInfer] %s", msg);
+
+        if (severity == Severity::kINFO) {
+            ROS_INFO("[TensorRT] %s", msg);
+        } else if (severity == Severity::kWARNING) {
+            ROS_WARN("[TensorRT] %s", msg);
+        } else if (severity == Severity::kERROR || severity == Severity::kINTERNAL_ERROR) {
+            ROS_ERROR("[TensorRT] %s", msg);
         }
     }
 } logger;
@@ -253,6 +255,7 @@ int main(int argc, char **argv) {
     long size;
     char *trtModelStream;
     std::ifstream file(weightfilepath, std::ios::binary);
+    ROS_INFO("Loading engine from %s", weightfilepath.c_str());
     if (file.good()) {
         file.seekg(0, file.end);
         size = file.tellg();
@@ -261,24 +264,23 @@ int main(int argc, char **argv) {
         assert(trtModelStream);
         file.read(trtModelStream, size);
         file.close();
-        ROS_INFO("Loaded engine from %s", weightfilepath.c_str());
     }
 
+    // Create runtime, deserialize engine and create execution context
     nvinfer1::IRuntime *runtime = nvinfer1::createInferRuntime(logger);
     assert(runtime != nullptr);
     nvinfer1::ICudaEngine *engine = runtime->deserializeCudaEngine(trtModelStream, size);
-
     assert(engine != nullptr);
     context = engine->createExecutionContext();
-
     assert(context != nullptr);
     delete[] trtModelStream;
 
-    // Allocate memory for every engine binding
+    // Allocate memory for every engine binding, and gather input & output information
     inputIndex = engine->getBindingIndex("images");
     outputIndex = engine->getBindingIndex("output");
     ROS_INFO("Reading engine bindings:");
-    for (int i = 0; i < 5; i++) {
+    buffers = new void *[engine->getNbBindings()];
+    for (int i = 0; i < engine->getNbBindings(); i++) {
 
         std::string dimension_desc = " [";
         size_t size = 1;
@@ -336,8 +338,8 @@ int main(int argc, char **argv) {
     ros::spin();
 
     // Shut everything down cleanly
-    for (void *buf : buffers) {
-        cudaFree(buf);
+    for (int i = 0; i < engine->getNbBindings(); i++) {
+        cudaFreeHost(buffers[i]);
     }
     ros::shutdown();
     subimg.shutdown();

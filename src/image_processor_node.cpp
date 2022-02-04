@@ -235,15 +235,10 @@ int main(int argc, char **argv) {
 
     // Get weightfile path from arguments
     std::string weightfilepath;
-    bool usecuda = true;
     if (argc == 2) {
         weightfilepath = argv[1];
-    } else if (argc == 3) {
-        weightfilepath = argv[1];
-        std::string arg2(argv[2]);
-        usecuda = !(arg2 == "false" || arg2 == "False" || arg2 == "0");
     } else {
-        ROS_ERROR("No weightfile argument passed.");
+        ROS_ERROR("Invalid number of argument passed to image processor.");
         ros::shutdown();
         return 0;
     }

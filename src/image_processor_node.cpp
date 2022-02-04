@@ -23,6 +23,7 @@ static int model_height = 640;
 
 static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
+static bool TRACE_LOGGING = false;
 
 template <typename... Args> std::string string_format(const std::string &format, Args... args) {
     // from https://stackoverflow.com/a/26221725
@@ -98,6 +99,17 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     unsigned long confidenceIndex = 4;
     unsigned long labelStartIndex = 5;
 
+    if (TRACE_LOGGING) {
+        std::string outputstring = "";
+        for (int i = 0; i < 6; i++) {
+            outputstring += std::to_string(cpu_output[i]) + " ";
+            if (i == 3 || i == 4) {
+                outputstring += "| ";
+            }
+        }
+        ROS_INFO("%s", outputstring.c_str());
+    }
+
     int highest_conf_index = 0;
     int highest_conf_label = 0;
     float highest_conf = 0.0f;
@@ -129,7 +141,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     // Evaluate results
     if (highest_conf > 0.4f) {
-
+        if (TRACE_LOGGING)
+            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label - 5, highest_conf);
         detection->propability = highest_conf;
         detection->classID = cpu_output[highest_conf_index + highest_conf_label];
         detection->centerX = cpu_output[highest_conf_index];
@@ -244,6 +257,7 @@ int main(int argc, char **argv) {
     }
 
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+    ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
 
     // TensorRT
     ROS_INFO("Initializing TRT");

@@ -251,6 +251,8 @@ void inferVideoInplace(std::string videopath, int iterations) {
     cv::Mat videoFrame;
 
     uint64_t pre = 0, fwd = 0, pst = 0;
+    double proc = 0.0;
+    processedFrameArrivalStamp = ros::Time::now();
 
     for (int i = 0; i < iterations; i++) {
         // create random matrix
@@ -265,16 +267,25 @@ void inferVideoInplace(std::string videopath, int iterations) {
 
         cudaMemcpy(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
                    cudaMemcpyDeviceToHost);
+        processedFrameID = enqueuedFrameID;
+        processedFrameArrivalStamp = enqueuedFrameArrivalStamp;
 
         uint64_t time2 = ros::Time::now().toNSec();
 
         doGPUpass(preprocessedFrame);
+        enqueuedFrameID = preprocessedFrameID;
+        enqueuedFrameArrivalStamp = preprocessedFrameArrivalStamp;
 
         uint64_t time3 = ros::Time::now().toNSec();
 
         postprocessTRTdetections(gpu_output, 0.0);
+        postprocessedFrameID = processedFrameID;
+        if (i > 2)
+            proc += (ros::Time::now().toNSec() - processedFrameArrivalStamp.toNSec()) / 1000000.0;
 
+        preprocessedFrameArrivalStamp = ros::Time::now();
         preprocessedFrame = preprocessImgTRT(videoFrame);
+        preprocessedFrameID = i;
 
         uint64_t time4 = ros::Time::now().toNSec();
 
@@ -291,9 +302,10 @@ void inferVideoInplace(std::string videopath, int iterations) {
     double avgpre = ((double)pre / iterations) / 1000000.0;
     double avgfwd = ((double)fwd / iterations) / 1000000.0;
     double avgpst = ((double)pst / iterations) / 1000000.0;
+    double avgproc = ((double)proc / (iterations - 2));
     ROS_INFO("Performing inference for %d iterations took %.2lf ms (Avg: "
-             "%.2lf [%.2lf %.2lf %.2lf])",
-             iterations, total, avgtotal, avgpre, avgfwd, avgpst);
+             "%.2lf [%.2lf %.2lf %.2lf] Proc: %.2lf)",
+             iterations, total, avgtotal, avgpre, avgfwd, avgpst, avgproc);
 }
 
 class Logger : public nvinfer1::ILogger {

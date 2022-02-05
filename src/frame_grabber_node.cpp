@@ -69,6 +69,11 @@ int main(int argc, char **argv) {
     bool TIME_LOGGING;
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
 
+    bool TRT_ready = false;
+    int model_width = 640;
+    int model_height = 640;
+    int trt_initialized = false;
+
     uint frame_id = 0;
     while (ros::ok()) {
 
@@ -79,18 +84,23 @@ int main(int argc, char **argv) {
             ros::Duration(0.5).sleep();
             continue;
         }
+        // wait for tensorrt to be ready before publishing frames
+        if (!trt_initialized && ros::param::getCached("rocket_tracker/videopath", TRT_ready) &&
+            TRT_ready) {
+            ros::param::get("rocket_tracker/model_width", model_width);
+            ros::param::get("rocket_tracker/model_height", model_height);
+            trt_initialized = false;
+        }
         ros::Time timestamp = ros::Time::now();
 
         // publish videoframe
-        // cv::cvtColor(videoFrame, videoFrame, cv::COLOR_BGR2RGB);
-        // =============================================
         // perform preprocessing
         // only resize down
-        if (videoFrame.rows > 640 || videoFrame.cols > 640) {
-            cv::resize(videoFrame, videoFrame, cv::Size(640, 640));
+        if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
+            cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
         }
 
-        static int model_size = 640 * 640;
+        static int model_size = model_width * model_height;
         std::vector<float> inputArray;
         inputArray.reserve(1 * 3 * model_size);
 
@@ -99,13 +109,12 @@ int main(int argc, char **argv) {
         videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
             // p[0-2] contains bgr data, position[0-1] the row-column location
             // Incoming data is BGR, so convert to RGB in the process
-            int index = 640 * position[0] + position[1];
+            int index = model_height * position[0] + position[1];
             inputArray[index] = p[2] / 255.0f;
             inputArray[model_size + index] = p[1] / 255.0f;
             inputArray[2 * model_size + index] = p[0] / 255.0f;
         });
-        if (TIME_LOGGING)
-            ROS_INFO("PRE FG: %.2f", (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0);
+        msg2.preprocessing_ms = (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0;
         // =============================================
         msg2.image = inputArray;
         msg2.id = frame_id;

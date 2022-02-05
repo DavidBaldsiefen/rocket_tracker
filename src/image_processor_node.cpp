@@ -39,19 +39,9 @@ template <typename... Args> std::string string_format(const std::string &format,
 }
 
 void preprocessImgTRT(std::vector<float> *image, void *inputBuffer) {
-    // thanks to https://zhuanlan.zhihu.com/p/344810135
-
-    uint64_t time = ros::Time::now().toNSec();
-
     float *inputArray = &(*image)[0];
-
     static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
     cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
-
-    uint64_t time2 = ros::Time::now().toNSec();
-
-    if (TIME_LOGGING)
-        time_logging_string += string_format("[PRE %.2lf]", (time2 - time) / 1000000.0);
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
@@ -129,8 +119,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     uint64_t time3 = ros::Time::now().toNSec();
 
     if (TIME_LOGGING)
-        time_logging_string += string_format("[PST %.2lf %.2lf]", (time2 - time) / 1000000.0,
-                                             (time3 - time2) / 1000000.0);
+        time_logging_string +=
+            string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
 rocket_tracker::detectionMSG processImage(std::vector<float> image) {
@@ -161,12 +151,9 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image) {
 
     uint64_t time4 = ros::Time::now().toNSec();
     if (TIME_LOGGING) {
-        ROS_INFO("%s", time_logging_string.c_str());
-        time_logging_string = string_format(
-            "PRE: %.2lf FWD: %.2lf PST: %.2lf TOTAL: %.2lf", (time2 - time) / 1000000.0,
-            (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0, (time4 - time0) / 1000000.0);
-
-        ROS_INFO("%s", time_logging_string.c_str());
+        ROS_INFO("TOTAL: %.2lf [PRE: %.2lf FWD: %.2lf PST: %.2lf %s]", (time4 - time0) / 1000000.0,
+                 (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0,
+                 (time4 - time3) / 1000000.0, time_logging_string.c_str());
     }
     return result;
 }
@@ -189,7 +176,8 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     // total time between framecapture and detection being published:
     double detectionTime = (ros::Time::now().toNSec() - msg.stamp.toNSec()) / 1000000.0;
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf", detectionTime);
+        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf)", detectionTime,
+                 msg.preprocessing_ms);
 
     detectionPublisher.publish(detection);
 }

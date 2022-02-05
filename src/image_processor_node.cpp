@@ -83,7 +83,7 @@ float *preprocessImgTRT(cv::Mat img) {
     return inputArray;
 }
 
-void postprocessTRTdetections(std::vector<float> cpu_output) {
+void postprocessTRTdetections(std::vector<float> cpu_output, float gpu_time) {
 
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
@@ -149,8 +149,6 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
         detection.height = cpu_output[highest_conf_index + 3];
     }
 
-    float gpu_time;
-    cudaEventElapsedTime(&gpu_time, start, stop);
     float total_pipeline_time =
         (detection.timestamp.toNSec() - processedFrameStamp.toNSec()) / 1000000.0f;
     if (TIME_LOGGING)
@@ -424,6 +422,7 @@ int main(int argc, char **argv) {
     cudaEventCreate(&stop);
     bool postProcessComplete = true;
     bool first = true;
+    float gpu_time;
     while (ros::ok) {
 
         if (cudaStreamQuery(0) == cudaSuccess) {
@@ -433,16 +432,19 @@ int main(int argc, char **argv) {
             processedFrameID = enqueuedFrameID;
             processedFrameStamp = enqueuedFrameStamp;
             processedFrameArrivalStamp = enqueuedFrameArrivalStamp;
-            if (!first) {
-                cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex],
-                                output_size * sizeof(float), cudaMemcpyDeviceToHost, 0);
+            if (!first && postprocessedFrameID != processedFrameID) {
+
+                cudaMemcpy(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                           cudaMemcpyDeviceToHost);
+                cudaEventRecord(stop, 0);
+                cudaEventElapsedTime(&gpu_time, start, stop);
             }
 
             if (newImagePreprocessed) { // this is only called when a  new image arrives, but not
                                         // necessarily when the pipeline finished
                 cudaEventRecord(start, 0);
                 doGPUpass(preprocessedFrame, first);
-                cudaEventRecord(stop, 0);
+
                 first = false;
                 newImagePreprocessed = false;
                 enqueuedFrameID = preprocessedFrameID;
@@ -451,7 +453,7 @@ int main(int argc, char **argv) {
             }
 
             if (postprocessedFrameID != processedFrameID) {
-                postprocessTRTdetections(gpu_output); // only do this once
+                postprocessTRTdetections(gpu_output, gpu_time); // only do this once
                 postprocessedFrameID = processedFrameID;
             }
         }

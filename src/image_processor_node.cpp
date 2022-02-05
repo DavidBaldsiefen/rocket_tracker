@@ -25,6 +25,7 @@ static int model_height = 640;
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
 ros::Time preprocessedFrameStamp;
+ros::Time preprocessedFrameArrivalStamp;
 static std::vector<float> gpu_output;
 static bool newImagePreprocessed = false;
 
@@ -140,7 +141,6 @@ void doGPUpass(float *inputArray) {
     cudaMemcpyAsync(buffers[inputIndex], inputArray, input_size * sizeof(float),
                     cudaMemcpyHostToDevice, 0);
     context->enqueueV2(buffers, 0, nullptr);
-    gpu_output.reserve(output_size);
     cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
                     cudaMemcpyDeviceToHost, 0);
 }
@@ -158,10 +158,10 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     if (!img->image.empty()) {
 
-        uint64_t time = ros::Time::now().toNSec();
-
         if (cudaStreamQuery(0) == cudaErrorNotReady) {
             // Stream still busy; start preprocessing
+            // This might mean that an old frame, that was already preprocessed, is discarded...
+            preprocessedFrameArrivalStamp = ros::Time::now();
             preprocessedFrame = preprocessImgTRT(img->image);
             preprocessedFrameID = msg->header.seq;
             preprocessedFrameStamp = msg->header.stamp;
@@ -185,12 +185,13 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
             postprocessTRTdetections(gpu_output, &result);
             result.timestamp = ros::Time::now();
-            detectionPublisher.publish(result); // now without frameID
+            detectionPublisher.publish(result);
 
             // pre
+            preprocessedFrameArrivalStamp = ros::Time::now();
             preprocessedFrame = preprocessImgTRT(img->image);
             preprocessedFrameID = msg->header.seq;
-            preprocessedFrameStamp = ros::Time::now();
+            preprocessedFrameStamp = msg->header.stamp;
             newImagePreprocessed = true;
         }
 
@@ -403,6 +404,8 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/model_height", model_height);
     ros::param::set("/rocket_tracker/trt_ready", true);
 
+    gpu_output.resize(output_size);
+
     ROS_INFO("TRT initialized");
     // ROS_INFO("Warming up over 200 iterations with random mats");
     // inferRandomMats(200);
@@ -416,8 +419,6 @@ int main(int argc, char **argv) {
                                        "/home/david/Downloads/silent_launches.mp4");
         // inferVideoInplace(videopath, testiterations);
     }
-
-    gpu_output.resize(output_size);
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);
@@ -457,14 +458,16 @@ int main(int argc, char **argv) {
 
             result.timestamp = ros::Time::now();
             result.processingTime =
-                (result.timestamp.toNSec() - preprocessedFrameStamp.toNSec()) / 1000000.0;
+                (result.timestamp.toNSec() - preprocessedFrameArrivalStamp.toNSec()) / 1000000.0;
+
             detectionPublisher.publish(result); // now without frameID
             std::string niceFormat = "";
             if (result.processingTime < 10)
                 niceFormat = "0";
             if (TIME_LOGGING)
-                ROS_INFO("Processing Time: %s%.2f (on GPU: %.2f)", niceFormat.c_str(),
-                         result.processingTime, GPU_time);
+                ROS_INFO("Processing Time: %s%.2f (on GPU: %.2f) Pipeline Time: %.2f",
+                         niceFormat.c_str(), result.processingTime, GPU_time,
+                         (result.timestamp.toNSec() - preprocessedFrameStamp.toNSec()) / 1000000.0);
         }
 
         ros::spinOnce();

@@ -26,8 +26,11 @@ static cudaEvent_t start, stop;
 
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
-ros::Time preprocessedFrameStamp;
-ros::Time preprocessedFrameArrivalStamp;
+static ros::Time preprocessedFrameStamp;
+static ros::Time preprocessedFrameArrivalStamp;
+static ros::Time enqueuedFrameStamp;
+static ros::Time enqueuedFrameArrivalStamp;
+static int enqueuedFrameID;
 static std::vector<float> gpu_output;
 static bool newImagePreprocessed = false;
 
@@ -124,10 +127,10 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
     }
 
     rocket_tracker::detectionMSG detection;
-    detection.frameID = preprocessedFrameID;
+    detection.frameID = enqueuedFrameID;
     detection.timestamp = ros::Time::now();
     detection.processingTime =
-        (detection.timestamp.toNSec() - preprocessedFrameArrivalStamp.toNSec()) / 1000000.0;
+        (detection.timestamp.toNSec() - enqueuedFrameArrivalStamp.toNSec()) / 1000000.0;
 
     // Evaluate results
     if (highest_conf > 0.4f) {
@@ -143,9 +146,11 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
 
     float gpu_time;
     cudaEventElapsedTime(&gpu_time, start, stop);
+    float total_pipeline_time =
+        (detection.timestamp.toNSec() - enqueuedFrameStamp.toNSec()) / 1000000.0f;
     if (TIME_LOGGING)
-        ROS_INFO("Total frame processing time: %.2f (GPU: %.2f)", detection.processingTime,
-                 gpu_time);
+        ROS_INFO("Total frame processing time: %.2f (GPU: %.2f) Total Pipeline Time: %.2f",
+                 detection.processingTime, gpu_time, total_pipeline_time);
 
     detectionPublisher.publish(detection);
 }
@@ -429,6 +434,9 @@ int main(int argc, char **argv) {
                 cudaEventRecord(stop, 0);
                 newImagePreprocessed = false;
                 postProcessingFinished = false;
+                enqueuedFrameID = preprocessedFrameID;
+                enqueuedFrameStamp = preprocessedFrameStamp;
+                enqueuedFrameArrivalStamp = preprocessedFrameArrivalStamp;
             }
         }
 

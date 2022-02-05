@@ -31,7 +31,7 @@ void Evaluator_GUI::setImage(cv::Mat img) {
 
         // Confidence threshold is applied in image processor, so draw everything
         // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
-        if (receivedDetection.propability != 0.0 && receivedFrameID == receivedDetection.frameID) {
+        if (receivedDetection.propability != 0.0) {
 
             // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
             int leftX = receivedDetection.centerX - (receivedDetection.width / 2);

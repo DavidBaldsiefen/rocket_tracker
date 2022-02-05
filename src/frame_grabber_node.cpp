@@ -1,6 +1,7 @@
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <opencv4/opencv2/opencv.hpp>
+#include <rocket_tracker/image.h>
 #include <ros/ros.h>
 
 static cv::VideoCapture capture;
@@ -48,6 +49,8 @@ int main(int argc, char **argv) {
     // queuesize = fps * 2, so there is a 2 seconds buffer to publish
     image_transport::Publisher pubimg =
         it.advertise("/image_topic", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
+    ros::Publisher pubimg2 = nh.advertise<rocket_tracker::image>(
+        "/image_topic_2", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
 
     // Open video capture
     if (!initCapture(videopath)) {
@@ -55,6 +58,7 @@ int main(int argc, char **argv) {
     }
 
     sensor_msgs::ImagePtr msg;
+    rocket_tracker::image msg2;
     cv::Mat videoFrame;
 
     // Main loop
@@ -76,6 +80,34 @@ int main(int argc, char **argv) {
 
         // publish videoframe
         // cv::cvtColor(videoFrame, videoFrame, cv::COLOR_BGR2RGB);
+        // =============================================
+        // perform preprocessing
+        // only resize down
+        if (videoFrame.rows > 640 || videoFrame.cols > 640) {
+            cv::resize(videoFrame, videoFrame, cv::Size(640, 640));
+        }
+
+        uint64_t time2 = ros::Time::now().toNSec();
+
+        static int model_size = 640 * 640;
+        std::vector<float> inputArray;
+        inputArray.resize(1 * 3 * model_size);
+
+        // for each is significantly faster than all other methods to traverse over the cv::Mat
+        // (read online and confirmed myself)
+        videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+            // p[0-2] contains bgr data, position[0-1] the row-column location
+            // Incoming data is BGR, so convert to RGB in the process
+            int index = 640 * position[0] + position[1];
+            inputArray[index] = p[2] / 255.0f;
+            inputArray[model_size + index] = p[1] / 255.0f;
+            inputArray[2 * model_size + index] = p[0] / 255.0f;
+        });
+        // =============================================
+        msg2.image = inputArray;
+        msg2.id = frame_id;
+        msg2.stamp = timestamp;
+        pubimg2.publish(msg2);
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
         msg->header.seq = frame_id;

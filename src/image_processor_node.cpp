@@ -158,11 +158,17 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
 void doGPUpass(float *inputArray) {
     // Execute everything that necessarily requires the GPU in one go
     // All on default Stream (0)
+    ros::Time t1 = ros::Time::now();
     cudaMemcpyAsync(buffers[inputIndex], inputArray, input_size * sizeof(float),
                     cudaMemcpyHostToDevice, 0);
+    ros::Time t2 = ros::Time::now();
     context->enqueueV2(buffers, 0, nullptr);
+    ros::Time t3 = ros::Time::now();
     cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
                     cudaMemcpyDeviceToHost, 0);
+    ros::Time t4 = ros::Time::now();
+    ROS_INFO("GPU pass: %.3f %.3f %.3f", (t2.toNSec() - t1.toNSec()) / 1000000.0f,
+             (t3.toNSec() - t2.toNSec()) / 1000000.0f, (t4.toNSec() - t3.toNSec()) / 1000000.0f);
 }
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
@@ -355,7 +361,7 @@ int main(int argc, char **argv) {
         }
 
         auto binding_size = size * 1 * sizeof(float);
-        if (cudaMallocHost(&buffers[i], binding_size) != cudaSuccess) {
+        if (cudaMalloc(&buffers[i], binding_size) != cudaSuccess) {
             ROS_WARN("Failed to allocate pinned memory! Switching to pageable memory instead.");
             if (cudaMalloc(&buffers[i], binding_size) != cudaSuccess) {
                 ROS_ERROR("Could not allocate cuda memory.");
@@ -429,6 +435,7 @@ int main(int argc, char **argv) {
 
             // start next GPU pass if already possible
             if (newImagePreprocessed) {
+                ros::Time t1 = ros::Time::now();
                 cudaEventRecord(start, 0);
                 doGPUpass(preprocessedFrame);
                 cudaEventRecord(stop, 0);
@@ -437,7 +444,11 @@ int main(int argc, char **argv) {
                 enqueuedFrameID = preprocessedFrameID;
                 enqueuedFrameStamp = preprocessedFrameStamp;
                 enqueuedFrameArrivalStamp = preprocessedFrameArrivalStamp;
+                ros::Time t2 = ros::Time::now();
+                ROS_INFO("GPU pass stuff took %.2fms", (t2.toNSec() - t1.toNSec()) / 1000000.0);
             }
+        } else {
+            ROS_INFO("GPU blocked");
         }
 
         ros::spinOnce();
@@ -446,7 +457,7 @@ int main(int argc, char **argv) {
 
     // Shut everything down cleanly
     for (int i = 0; i < engine->getNbBindings(); i++) {
-        cudaFreeHost(buffers[i]);
+        cudaFree(buffers[i]);
     }
     cudaEventDestroy(start);
     cudaEventDestroy(stop);

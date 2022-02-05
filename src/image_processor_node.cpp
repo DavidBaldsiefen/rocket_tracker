@@ -176,8 +176,8 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     // total time between framecapture and detection being published:
     double detectionTime = (ros::Time::now().toNSec() - msg.stamp.toNSec()) / 1000000.0;
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf)", detectionTime,
-                 msg.preprocessing_ms);
+        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf) => %.1fFPS", detectionTime,
+                 msg.preprocessing_ms, 1000.0 / detectionTime);
 
     detectionPublisher.publish(detection);
 }

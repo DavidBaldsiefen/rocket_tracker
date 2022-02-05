@@ -16,10 +16,16 @@ nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
 static int64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
+static int64_t input_size = 1 * 3 * 640 * 640;
 
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
+
+static float *preprocessedFrame;
+static int preprocessedFrameID = 0;
+static std::vector<float> gpu_output;
+static bool newImagePreprocessed = false;
 
 static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
@@ -37,20 +43,16 @@ template <typename... Args> std::string string_format(const std::string &format,
     return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 }
 
-void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
+float *preprocessImgTRT(cv::Mat img) {
     // thanks to https://zhuanlan.zhihu.com/p/344810135
     if (img.empty()) {
         ROS_WARN("Empty image received!");
     }
 
-    uint64_t time = ros::Time::now().toNSec();
-
     // only resize down
     if (img.rows > model_height || img.cols > model_width) {
         cv::resize(img, img, cv::Size(model_width, model_height));
     }
-
-    uint64_t time2 = ros::Time::now().toNSec();
 
     static int model_size = model_width * model_height;
     static float *inputArray = new float[1 * 3 * model_size];
@@ -66,32 +68,11 @@ void preprocessImgTRT(cv::Mat img, void *inputBuffer) {
         inputArray[2 * model_size + index] = p[0] / 255.0f;
     });
 
-    uint64_t time3 = ros::Time::now().toNSec();
-
-    static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
-    cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
-
-    uint64_t time4 = ros::Time::now().toNSec();
-
-    if (TIME_LOGGING)
-        time_logging_string +=
-            string_format("[PRE %.2lf %.2lf %.2lf]", (time2 - time) / 1000000.0,
-                          (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0);
+    return inputArray;
 }
 
-void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
-
-    // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
-
-    uint64_t time = ros::Time::now().toNSec();
-
-    static size_t output_buffer_size = output_size * sizeof(float);
-    std::vector<float> cpu_output(output_size);
-
-    cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size,
-               cudaMemcpyDeviceToHost); // Could postprocessing be done on gpu?
-
-    uint64_t time2 = ros::Time::now().toNSec();
+void postprocessTRTdetections(std::vector<float> cpu_output,
+                              rocket_tracker::detectionMSG *detection) {
 
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
@@ -150,50 +131,17 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         detection->width = cpu_output[highest_conf_index + 2];
         detection->height = cpu_output[highest_conf_index + 3];
     }
-
-    uint64_t time3 = ros::Time::now().toNSec();
-
-    if (TIME_LOGGING)
-        time_logging_string += string_format("[PST %.2lf %.2lf]", (time2 - time) / 1000000.0,
-                                             (time3 - time2) / 1000000.0);
 }
 
-rocket_tracker::detectionMSG processImage(cv::Mat img) {
-
-    uint64_t time0 = ros::Time::now().toNSec();
-
-    rocket_tracker::detectionMSG result;
-    result.centerX = 0.0;
-    result.centerY = 0.0;
-    result.width = 0.0;
-    result.height = 0.0;
-    result.classID = 0;
-    result.propability = 0.0;
-    result.frameID = 0;
-
-    time_logging_string = "";
-    uint64_t time = ros::Time::now().toNSec();
-
-    preprocessImgTRT(img, buffers[inputIndex]);
-
-    uint64_t time2 = ros::Time::now().toNSec();
-
-    context->executeV2(buffers); // Invoke synchronous inference
-
-    uint64_t time3 = ros::Time::now().toNSec();
-
-    postprocessTRTdetections(buffers[outputIndex], &result);
-
-    uint64_t time4 = ros::Time::now().toNSec();
-    if (TIME_LOGGING) {
-        ROS_INFO("%s", time_logging_string.c_str());
-        time_logging_string = string_format(
-            "PRE: %.2lf FWD: %.2lf PST: %.2lf TOTAL: %.2lf", (time2 - time) / 1000000.0,
-            (time3 - time2) / 1000000.0, (time4 - time3) / 1000000.0, (time4 - time0) / 1000000.0);
-
-        ROS_INFO("%s", time_logging_string.c_str());
-    }
-    return result;
+void doGPUpass(float *inputArray) {
+    // Execute everything that necessarily requires the GPU in one go
+    // All on default Stream (0)
+    cudaMemcpyAsync(buffers[inputIndex], inputArray, input_size * sizeof(float),
+                    cudaMemcpyHostToDevice, 0);
+    context->enqueueV2(buffers, 0, nullptr);
+    gpu_output.reserve(output_size);
+    cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                    cudaMemcpyDeviceToHost, 0);
 }
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
@@ -211,18 +159,38 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
         uint64_t time = ros::Time::now().toNSec();
 
-        rocket_tracker::detectionMSG detection;
-        detection = processImage(img->image);
+        if (cudaStreamQuery(0) == cudaErrorNotReady) {
+            // Stream still busy; start preprocessing
+            preprocessedFrame = preprocessImgTRT(img->image);
+            preprocessedFrameID = msg->header.seq;
+            newImagePreprocessed = true;
+        } else {
+            // Cuda stream is free; start new one if appropriate, then post and then preprocessing
+            if (newImagePreprocessed) {
+                doGPUpass(preprocessedFrame);
+                newImagePreprocessed = false;
+            }
 
-        detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
-        detection.timestamp = time / 1000000.0;
-        detection.frameID = msg->header.seq;
-        // total time between framecapture and detection being published:
-        double detectionTime = (ros::Time::now().toNSec() - msg->header.stamp.toNSec()) / 1000000.0;
-        if (TIME_LOGGING)
-            ROS_INFO("Total detection time: %.2lf", detectionTime);
+            // post
+            rocket_tracker::detectionMSG result;
+            result.centerX = 0.0;
+            result.centerY = 0.0;
+            result.width = 0.0;
+            result.height = 0.0;
+            result.classID = 0;
+            result.propability = 0.0;
+            result.frameID = preprocessedFrameID;
 
-        detectionPublisher.publish(detection);
+            postprocessTRTdetections(gpu_output, &result);
+            result.timestamp = ros::Time::now();
+            detectionPublisher.publish(result); // now without frameID
+
+            // pre
+            preprocessedFrame = preprocessImgTRT(img->image);
+            preprocessedFrameID = msg->header.seq;
+            newImagePreprocessed = true;
+        }
+
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }
@@ -243,11 +211,11 @@ void inferRandomMats(int iterations) {
         cv::randn(mat, cv::Scalar(0.0, 0.0, 0.0), cv::Scalar(255 / 3.0, 255 / 3.0, 255 / 3.0));
 
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(mat, buffers[inputIndex]);
+        // preprocessImgTRT(mat, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
+        // postprocessTRTdetections(buffers[outputIndex], &detection);
         uint64_t time4 = ros::Time::now().toNSec();
 
         pre += time2 - time1;
@@ -294,11 +262,11 @@ void inferVideoInplace(std::string videopath, int iterations) {
         }
 
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(videoFrame, buffers[inputIndex]);
+        // preprocessImgTRT(videoFrame, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
+        // postprocessTRTdetections(buffers[outputIndex], &detection);
         uint64_t time4 = ros::Time::now().toNSec();
 
         if (detection.propability > 0.4)
@@ -414,6 +382,7 @@ int main(int argc, char **argv) {
         } else if (i == inputIndex) {
             model_width = dims.d[dims.nbDims - 2];
             model_height = dims.d[dims.nbDims - 1];
+            input_size = size;
         }
 
         ROS_INFO("%s", dimension_desc.c_str());
@@ -432,8 +401,8 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/trt_ready", true);
 
     ROS_INFO("TRT initialized");
-    ROS_INFO("Warming up over 200 iterations with random mats");
-    inferRandomMats(200);
+    // ROS_INFO("Warming up over 200 iterations with random mats");
+    // inferRandomMats(200);
     std::string videopath;
 
     int testiterations = 0;
@@ -442,8 +411,10 @@ int main(int argc, char **argv) {
         ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
         ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
                                        "/home/david/Downloads/silent_launches.mp4");
-        inferVideoInplace(videopath, testiterations);
+        // inferVideoInplace(videopath, testiterations);
     }
+
+    gpu_output.resize(output_size);
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);
@@ -453,7 +424,32 @@ int main(int argc, char **argv) {
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
     // Main loop
-    ros::spin();
+    ros::Rate r(150); // target fps
+    while (ros::ok) {
+
+        if (cudaStreamQuery(0) == cudaSuccess) {
+            // stream is ready; Immediately start new stream and then postprocessing
+            if (newImagePreprocessed) {
+                doGPUpass(preprocessedFrame);
+                newImagePreprocessed = false;
+            }
+            rocket_tracker::detectionMSG result;
+            result.centerX = 0.0;
+            result.centerY = 0.0;
+            result.width = 0.0;
+            result.height = 0.0;
+            result.classID = 0;
+            result.propability = 0.0;
+            result.frameID = preprocessedFrameID;
+
+            postprocessTRTdetections(gpu_output, &result);
+            result.timestamp = ros::Time::now();
+            detectionPublisher.publish(result); // now without frameID
+        }
+
+        ros::spinOnce();
+        r.sleep();
+    }
 
     // Shut everything down cleanly
     for (int i = 0; i < engine->getNbBindings(); i++) {

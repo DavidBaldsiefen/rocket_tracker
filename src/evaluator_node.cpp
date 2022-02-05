@@ -9,6 +9,7 @@
 #include <ros/ros.h>
 
 static cv::Mat receivedFrame;
+ros::Time receivedFrameStamp;
 static uint receivedFrameID;
 static rocket_tracker::detectionMSG receivedDetection;
 static Ui_Form *ui;
@@ -32,6 +33,10 @@ void Evaluator_GUI::setImage(cv::Mat img) {
         // Confidence threshold is applied in image processor, so draw everything
         // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
         if (receivedDetection.propability != 0.0 && receivedFrameID == receivedDetection.frameID) {
+
+            ROS_INFO("Delay measured in evaluator: %f",
+                     (receivedDetection.timestamp.toNSec() - receivedFrameStamp.toNSec()) /
+                         1000000.0);
 
             // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
             int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
@@ -79,6 +84,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     if (!img->image.empty()) {
         receivedFrame = img->image;
+        receivedFrameStamp = img->header.stamp;
         cv::cvtColor(receivedFrame, receivedFrame, cv::COLOR_BGR2RGB);
         receivedFrameID = msg->header.seq;
     } else {
@@ -106,9 +112,10 @@ void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
     }
 
     // actual fps based on frequenc of incoming messages in IP
-    static double lastTimestamp = msg.timestamp - 0.1; // subtract 0.1 to preent div/0
-    double actualFPS = (1000.0 / (msg.timestamp - lastTimestamp));
-    lastTimestamp = msg.timestamp;
+    static double lastTimestamp =
+        msg.timestamp.toNSec() / 1000000.0 - 0.1; // subtract 0.1 to preent div/0
+    double actualFPS = (1000.0 / ((msg.timestamp.toNSec() / 1000000.0) - lastTimestamp));
+    lastTimestamp = msg.timestamp.toNSec() / 1000000.0;
     ui->ip_fps_actual->setText(QString::number(actualFPS, 'f', 0) + QString("fps"));
 }
 

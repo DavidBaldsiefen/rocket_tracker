@@ -158,7 +158,7 @@ void postprocessTRTdetections(std::vector<float> cpu_output, float gpu_time) {
     detectionPublisher.publish(detection);
 }
 
-void doGPUpass(float *inputArray, bool skipFirstMemcpy) {
+void doGPUpass(float *inputArray) {
     // Execute everything that necessarily requires the GPU in one go
     // All on default Stream (0)
     // first, copy the output, _then_ do input and forward
@@ -204,11 +204,20 @@ void inferRandomMats(int iterations) {
         cv::randn(mat, cv::Scalar(0.0, 0.0, 0.0), cv::Scalar(255 / 3.0, 255 / 3.0, 255 / 3.0));
 
         uint64_t time1 = ros::Time::now().toNSec();
-        // preprocessImgTRT(mat, buffers[inputIndex]);
+
+        cudaMemcpy(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                   cudaMemcpyDeviceToHost);
+
         uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
+
+        doGPUpass(preprocessedFrame);
+
         uint64_t time3 = ros::Time::now().toNSec();
-        // postprocessTRTdetections(buffers[outputIndex], &detection);
+
+        postprocessTRTdetections(gpu_output, 0.0);
+
+        preprocessedFrame = preprocessImgTRT(mat);
+
         uint64_t time4 = ros::Time::now().toNSec();
 
         pre += time2 - time1;
@@ -240,10 +249,8 @@ void inferVideoInplace(std::string videopath, int iterations) {
         return;
     }
     cv::Mat videoFrame;
-    rocket_tracker::detectionMSG detection;
 
     uint64_t pre = 0, fwd = 0, pst = 0;
-    int detections = 0;
 
     for (int i = 0; i < iterations; i++) {
         // create random matrix
@@ -255,15 +262,21 @@ void inferVideoInplace(std::string videopath, int iterations) {
         }
 
         uint64_t time1 = ros::Time::now().toNSec();
-        // preprocessImgTRT(videoFrame, buffers[inputIndex]);
-        uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
-        uint64_t time3 = ros::Time::now().toNSec();
-        // postprocessTRTdetections(buffers[outputIndex], &detection);
-        uint64_t time4 = ros::Time::now().toNSec();
 
-        if (detection.propability > 0.4)
-            detections++;
+        cudaMemcpy(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                   cudaMemcpyDeviceToHost);
+
+        uint64_t time2 = ros::Time::now().toNSec();
+
+        doGPUpass(preprocessedFrame);
+
+        uint64_t time3 = ros::Time::now().toNSec();
+
+        postprocessTRTdetections(gpu_output, 0.0);
+
+        preprocessedFrame = preprocessImgTRT(videoFrame);
+
+        uint64_t time4 = ros::Time::now().toNSec();
 
         pre += time2 - time1;
         fwd += time3 - time2;
@@ -278,9 +291,9 @@ void inferVideoInplace(std::string videopath, int iterations) {
     double avgpre = ((double)pre / iterations) / 1000000.0;
     double avgfwd = ((double)fwd / iterations) / 1000000.0;
     double avgpst = ((double)pst / iterations) / 1000000.0;
-    ROS_INFO("Performing inference for %d iterations took %.2lf ms, with %d items detected. (Avg: "
+    ROS_INFO("Performing inference for %d iterations took %.2lf ms (Avg: "
              "%.2lf [%.2lf %.2lf %.2lf])",
-             iterations, total, detections, avgtotal, avgpre, avgfwd, avgpst);
+             iterations, total, avgtotal, avgpre, avgfwd, avgpst);
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -396,18 +409,6 @@ int main(int argc, char **argv) {
     gpu_output.resize(output_size);
 
     ROS_INFO("TRT initialized");
-    // ROS_INFO("Warming up over 200 iterations with random mats");
-    // inferRandomMats(200);
-    std::string videopath;
-
-    int testiterations = 0;
-    ros::param::get("/rocket_tracker/testiterations", testiterations);
-    if (testiterations > 0) {
-        ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
-        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
-                                       "/home/david/Downloads/silent_launches.mp4");
-        // inferVideoInplace(videopath, testiterations);
-    }
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);
@@ -415,6 +416,17 @@ int main(int argc, char **argv) {
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
+
+    inferRandomMats(200);
+    std::string videopath;
+    int testiterations = 0;
+    ros::param::get("/rocket_tracker/testiterations", testiterations);
+    if (testiterations > 0) {
+        ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
+        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
+                                       "/home/david/Downloads/silent_launches.mp4");
+        inferVideoInplace(videopath, testiterations);
+    }
 
     // Main loop
     ros::Rate r(150); // target fps
@@ -443,7 +455,7 @@ int main(int argc, char **argv) {
             if (newImagePreprocessed) { // this is only called when a  new image arrives, but not
                                         // necessarily when the pipeline finished
                 cudaEventRecord(start, 0);
-                doGPUpass(preprocessedFrame, first);
+                doGPUpass(preprocessedFrame);
 
                 first = false;
                 newImagePreprocessed = false;

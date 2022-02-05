@@ -22,6 +22,8 @@ static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
 
+static cudaEvent_t start, stop;
+
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
 ros::Time preprocessedFrameStamp;
@@ -73,8 +75,7 @@ float *preprocessImgTRT(cv::Mat img) {
     return inputArray;
 }
 
-void postprocessTRTdetections(std::vector<float> cpu_output,
-                              rocket_tracker::detectionMSG *detection) {
+void postprocessTRTdetections(std::vector<float> cpu_output) {
 
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
@@ -122,17 +123,31 @@ void postprocessTRTdetections(std::vector<float> cpu_output,
         }
     }
 
+    rocket_tracker::detectionMSG detection;
+    detection.frameID = preprocessedFrameID;
+    detection.timestamp = ros::Time::now();
+    detection.processingTime =
+        (detection.timestamp.toNSec() - preprocessedFrameArrivalStamp.toNSec()) / 1000000.0;
+
     // Evaluate results
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label - 5, highest_conf);
-        detection->propability = highest_conf;
-        detection->classID = cpu_output[highest_conf_index + highest_conf_label];
-        detection->centerX = cpu_output[highest_conf_index];
-        detection->centerY = cpu_output[highest_conf_index + 1];
-        detection->width = cpu_output[highest_conf_index + 2];
-        detection->height = cpu_output[highest_conf_index + 3];
+        detection.propability = highest_conf;
+        detection.classID = cpu_output[highest_conf_index + highest_conf_label];
+        detection.centerX = cpu_output[highest_conf_index];
+        detection.centerY = cpu_output[highest_conf_index + 1];
+        detection.width = cpu_output[highest_conf_index + 2];
+        detection.height = cpu_output[highest_conf_index + 3];
     }
+
+    float gpu_time;
+    cudaEventElapsedTime(&gpu_time, start, stop);
+    if (TIME_LOGGING)
+        ROS_INFO("Total frame processing time: %.2f (GPU: %.2f)", detection.processingTime,
+                 gpu_time);
+
+    detectionPublisher.publish(detection);
 }
 
 void doGPUpass(float *inputArray) {
@@ -157,44 +172,11 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     last_frame_id = msg->header.seq;
 
     if (!img->image.empty()) {
-
-        if (cudaStreamQuery(0) == cudaErrorNotReady) {
-            // Stream still busy; start preprocessing
-            // This might mean that an old frame, that was already preprocessed, is discarded...
-            preprocessedFrameArrivalStamp = ros::Time::now();
-            preprocessedFrame = preprocessImgTRT(img->image);
-            preprocessedFrameID = msg->header.seq;
-            preprocessedFrameStamp = msg->header.stamp;
-            newImagePreprocessed = true;
-        } else {
-            // Cuda stream is free; start new one if appropriate, then post and then preprocessing
-            if (newImagePreprocessed) {
-                doGPUpass(preprocessedFrame);
-                newImagePreprocessed = false;
-            }
-
-            // post
-            rocket_tracker::detectionMSG result;
-            result.centerX = 0.0;
-            result.centerY = 0.0;
-            result.width = 0.0;
-            result.height = 0.0;
-            result.classID = 0;
-            result.propability = 0.0;
-            result.frameID = preprocessedFrameID;
-
-            postprocessTRTdetections(gpu_output, &result);
-            result.timestamp = ros::Time::now();
-            detectionPublisher.publish(result);
-
-            // pre
-            preprocessedFrameArrivalStamp = ros::Time::now();
-            preprocessedFrame = preprocessImgTRT(img->image);
-            preprocessedFrameID = msg->header.seq;
-            preprocessedFrameStamp = msg->header.stamp;
-            newImagePreprocessed = true;
-        }
-
+        preprocessedFrameArrivalStamp = ros::Time::now();
+        preprocessedFrame = preprocessImgTRT(img->image);
+        preprocessedFrameID = msg->header.seq;
+        preprocessedFrameStamp = msg->header.stamp;
+        newImagePreprocessed = true;
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }
@@ -429,45 +411,25 @@ int main(int argc, char **argv) {
 
     // Main loop
     ros::Rate r(150); // target fps
-    cudaEvent_t start, stop;
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
+    bool postProcessingFinished = true;
     while (ros::ok) {
 
         if (cudaStreamQuery(0) == cudaSuccess) {
-            // stream is ready; Immediately start new stream and then postprocessing
-            float GPU_time = 0;
-            cudaEventElapsedTime(&GPU_time, start, stop);
+            if (!postProcessingFinished) {
+                postprocessTRTdetections(gpu_output); // only do this once
+                postProcessingFinished = true;
+            }
 
+            // start next GPU pass if already possible
             if (newImagePreprocessed) {
                 cudaEventRecord(start, 0);
                 doGPUpass(preprocessedFrame);
                 cudaEventRecord(stop, 0);
                 newImagePreprocessed = false;
+                postProcessingFinished = false;
             }
-            rocket_tracker::detectionMSG result;
-            result.centerX = 0.0;
-            result.centerY = 0.0;
-            result.width = 0.0;
-            result.height = 0.0;
-            result.classID = 0;
-            result.propability = 0.0;
-            result.frameID = preprocessedFrameID;
-
-            postprocessTRTdetections(gpu_output, &result);
-
-            result.timestamp = ros::Time::now();
-            result.processingTime =
-                (result.timestamp.toNSec() - preprocessedFrameArrivalStamp.toNSec()) / 1000000.0;
-
-            detectionPublisher.publish(result); // now without frameID
-            std::string niceFormat = "";
-            if (result.processingTime < 10)
-                niceFormat = "0";
-            if (TIME_LOGGING)
-                ROS_INFO("Processing Time: %s%.2f (on GPU: %.2f) Pipeline Time: %.2f",
-                         niceFormat.c_str(), result.processingTime, GPU_time,
-                         (result.timestamp.toNSec() - preprocessedFrameStamp.toNSec()) / 1000000.0);
         }
 
         ros::spinOnce();
@@ -478,6 +440,8 @@ int main(int argc, char **argv) {
     for (int i = 0; i < engine->getNbBindings(); i++) {
         cudaFreeHost(buffers[i]);
     }
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
     ros::shutdown();
     subimg.shutdown();
     detectionPublisher.shutdown();

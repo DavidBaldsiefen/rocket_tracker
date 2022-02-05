@@ -26,6 +26,7 @@ static cudaEvent_t start, stop;
 
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
+static int postprocessedFrameID = 0;
 static ros::Time preprocessedFrameStamp;
 static ros::Time preprocessedFrameArrivalStamp;
 static ros::Time enqueuedFrameStamp;
@@ -155,20 +156,17 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
     detectionPublisher.publish(detection);
 }
 
-void doGPUpass(float *inputArray) {
+void doGPUpass(float *inputArray, bool skipFirstMemcpy) {
     // Execute everything that necessarily requires the GPU in one go
     // All on default Stream (0)
-    ros::Time t1 = ros::Time::now();
+    // first, copy the output, _then_ do input and forward
+    if (!skipFirstMemcpy) {
+        cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                        cudaMemcpyDeviceToHost, 0);
+    }
     cudaMemcpyAsync(buffers[inputIndex], inputArray, input_size * sizeof(float),
                     cudaMemcpyHostToDevice, 0);
-    ros::Time t2 = ros::Time::now();
     context->enqueueV2(buffers, 0, nullptr);
-    ros::Time t3 = ros::Time::now();
-    cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
-                    cudaMemcpyDeviceToHost, 0);
-    ros::Time t4 = ros::Time::now();
-    ROS_INFO("GPU pass: %.3f %.3f %.3f", (t2.toNSec() - t1.toNSec()) / 1000000.0f,
-             (t3.toNSec() - t2.toNSec()) / 1000000.0f, (t4.toNSec() - t3.toNSec()) / 1000000.0f);
 }
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
@@ -424,31 +422,27 @@ int main(int argc, char **argv) {
     ros::Rate r(150); // target fps
     cudaEventCreate(&start);
     cudaEventCreate(&stop);
-    bool postProcessingFinished = true;
+    bool postProcessComplete = true;
+    bool first = true;
     while (ros::ok) {
 
         if (cudaStreamQuery(0) == cudaSuccess) {
-            if (!postProcessingFinished) {
-                postprocessTRTdetections(gpu_output); // only do this once
-                postProcessingFinished = true;
-            }
-
             // start next GPU pass if already possible
             if (newImagePreprocessed) {
-                ros::Time t1 = ros::Time::now();
                 cudaEventRecord(start, 0);
-                doGPUpass(preprocessedFrame);
+                doGPUpass(preprocessedFrame, first);
                 cudaEventRecord(stop, 0);
+                first = false;
                 newImagePreprocessed = false;
-                postProcessingFinished = false;
                 enqueuedFrameID = preprocessedFrameID;
                 enqueuedFrameStamp = preprocessedFrameStamp;
                 enqueuedFrameArrivalStamp = preprocessedFrameArrivalStamp;
-                ros::Time t2 = ros::Time::now();
-                ROS_INFO("GPU pass stuff took %.2fms", (t2.toNSec() - t1.toNSec()) / 1000000.0);
             }
-        } else {
-            ROS_INFO("GPU blocked");
+
+            if (postprocessedFrameID != enqueuedFrameID) {
+                postprocessTRTdetections(gpu_output); // only do this once
+                postprocessedFrameID = enqueuedFrameID;
+            }
         }
 
         ros::spinOnce();

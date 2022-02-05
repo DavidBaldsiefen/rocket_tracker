@@ -266,6 +266,62 @@ void inferRandomMats(int iterations) {
         iterations, total, avgtotal, avgpre, avgfwd, avgpst);
 }
 
+void inferVideoInplace(std::string videopath, int iterations) {
+    // Infers random matrices over n iterations
+
+    // Open video file
+    cv::VideoCapture capture;
+    ROS_INFO("Infering video inplace from %s", videopath.c_str());
+    capture = cv::VideoCapture(videopath);
+    if (!capture.isOpened()) {
+        capture.release();
+        ROS_ERROR("Failed to open video capture! Provided path: %s", videopath.c_str());
+        return;
+    }
+    cv::Mat videoFrame;
+    rocket_tracker::detectionMSG detection;
+
+    uint64_t pre = 0, fwd = 0, pst = 0;
+    int detections = 0;
+
+    for (int i = 0; i < iterations; i++) {
+        // create random matrix
+        if (!capture.read(videoFrame)) {
+            capture.set(cv::CAP_PROP_POS_FRAMES, 0);
+        }
+        if (videoFrame.empty()) {
+            continue;
+        }
+
+        uint64_t time1 = ros::Time::now().toNSec();
+        preprocessImgTRT(videoFrame, buffers[inputIndex]);
+        uint64_t time2 = ros::Time::now().toNSec();
+        context->executeV2(buffers); // Invoke synchronous inference
+        uint64_t time3 = ros::Time::now().toNSec();
+        postprocessTRTdetections(buffers[outputIndex], &detection);
+        uint64_t time4 = ros::Time::now().toNSec();
+
+        if (detection.propability > 0.4)
+            detections++;
+
+        pre += time2 - time1;
+        fwd += time3 - time2;
+        pst += time4 - time3;
+    }
+
+    capture.release();
+
+    // Evaluate timings
+    double total = (pre + fwd + pst) / 1000000.0;
+    double avgtotal = (total / iterations);
+    double avgpre = ((double)pre / iterations) / 1000000.0;
+    double avgfwd = ((double)fwd / iterations) / 1000000.0;
+    double avgpst = ((double)pst / iterations) / 1000000.0;
+    ROS_INFO("Performing inference for %d iterations took %.2lf ms, with %d items detected. (Avg: "
+             "%.2lf [%.2lf %.2lf %.2lf])",
+             iterations, total, detections, avgtotal, avgpre, avgfwd, avgpst);
+}
+
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override {
 
@@ -376,8 +432,18 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/trt_ready", true);
 
     ROS_INFO("TRT initialized");
-    ROS_INFO("Warming up over 200 iterations");
+    ROS_INFO("Warming up over 200 iterations with random mats");
     inferRandomMats(200);
+    std::string videopath;
+
+    int testiterations = 0;
+    ros::param::get("/rocket_tracker/testiterations", testiterations);
+    if (testiterations > 0) {
+        ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
+        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
+                                       "/home/david/Downloads/silent_launches.mp4");
+        inferVideoInplace(videopath, testiterations);
+    }
 
     // Creating image-transport subscriber
     image_transport::ImageTransport it(nh);

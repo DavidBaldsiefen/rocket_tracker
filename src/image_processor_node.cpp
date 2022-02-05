@@ -24,6 +24,7 @@ static int model_height = 640;
 
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
+ros::Time preprocessedFrameStamp;
 static std::vector<float> gpu_output;
 static bool newImagePreprocessed = false;
 
@@ -163,6 +164,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
             // Stream still busy; start preprocessing
             preprocessedFrame = preprocessImgTRT(img->image);
             preprocessedFrameID = msg->header.seq;
+            preprocessedFrameStamp = msg->header.stamp;
             newImagePreprocessed = true;
         } else {
             // Cuda stream is free; start new one if appropriate, then post and then preprocessing
@@ -188,6 +190,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
             // pre
             preprocessedFrame = preprocessImgTRT(img->image);
             preprocessedFrameID = msg->header.seq;
+            preprocessedFrameStamp = ros::Time::now();
             newImagePreprocessed = true;
         }
 
@@ -425,12 +428,20 @@ int main(int argc, char **argv) {
 
     // Main loop
     ros::Rate r(150); // target fps
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
     while (ros::ok) {
 
         if (cudaStreamQuery(0) == cudaSuccess) {
             // stream is ready; Immediately start new stream and then postprocessing
+            float GPU_time = 0;
+            cudaEventElapsedTime(&GPU_time, start, stop);
+
             if (newImagePreprocessed) {
+                cudaEventRecord(start, 0);
                 doGPUpass(preprocessedFrame);
+                cudaEventRecord(stop, 0);
                 newImagePreprocessed = false;
             }
             rocket_tracker::detectionMSG result;
@@ -443,8 +454,17 @@ int main(int argc, char **argv) {
             result.frameID = preprocessedFrameID;
 
             postprocessTRTdetections(gpu_output, &result);
+
             result.timestamp = ros::Time::now();
+            result.processingTime =
+                (result.timestamp.toNSec() - preprocessedFrameStamp.toNSec()) / 1000000.0;
             detectionPublisher.publish(result); // now without frameID
+            std::string niceFormat = "";
+            if (result.processingTime < 10)
+                niceFormat = "0";
+            if (TIME_LOGGING)
+                ROS_INFO("Processing Time: %s%.2f (on GPU: %.2f)", niceFormat.c_str(),
+                         result.processingTime, GPU_time);
         }
 
         ros::spinOnce();

@@ -34,10 +34,6 @@ void Evaluator_GUI::setImage(cv::Mat img) {
         // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
         if (receivedDetection.propability != 0.0 && receivedFrameID == receivedDetection.frameID) {
 
-            ROS_INFO("Delay measured in evaluator: %f",
-                     (receivedDetection.timestamp.toNSec() - receivedFrameStamp.toNSec()) /
-                         1000000.0);
-
             // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
             int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
             int topY = receivedDetection.centerY - (receivedDetection.height / 2);
@@ -113,7 +109,7 @@ void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
 
     // actual fps based on frequenc of incoming messages in IP
     static double lastTimestamp =
-        msg.timestamp.toNSec() / 1000000.0 - 0.1; // subtract 0.1 to preent div/0
+        msg.timestamp.toNSec() / 1000000.0; // subtract 0.1 to preent div/0
     double actualFPS = (1000.0 / ((msg.timestamp.toNSec() / 1000000.0) - lastTimestamp));
     lastTimestamp = msg.timestamp.toNSec() / 1000000.0;
     ui->ip_fps_actual->setText(QString::number(actualFPS, 'f', 0) + QString("fps"));

@@ -26,12 +26,16 @@ static cudaEvent_t start, stop;
 
 static float *preprocessedFrame;
 static int preprocessedFrameID = 0;
+static int enqueuedFrameID = 0;
+static int processedFrameID = 0;
 static int postprocessedFrameID = 0;
 static ros::Time preprocessedFrameStamp;
 static ros::Time preprocessedFrameArrivalStamp;
 static ros::Time enqueuedFrameStamp;
 static ros::Time enqueuedFrameArrivalStamp;
-static int enqueuedFrameID;
+static ros::Time processedFrameStamp;
+static ros::Time processedFrameArrivalStamp;
+
 static std::vector<float> gpu_output;
 static bool newImagePreprocessed = false;
 
@@ -128,10 +132,10 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
     }
 
     rocket_tracker::detectionMSG detection;
-    detection.frameID = enqueuedFrameID;
+    detection.frameID = processedFrameID;
     detection.timestamp = ros::Time::now();
     detection.processingTime =
-        (detection.timestamp.toNSec() - enqueuedFrameArrivalStamp.toNSec()) / 1000000.0;
+        (detection.timestamp.toNSec() - processedFrameArrivalStamp.toNSec()) / 1000000.0;
 
     // Evaluate results
     if (highest_conf > 0.4f) {
@@ -148,7 +152,7 @@ void postprocessTRTdetections(std::vector<float> cpu_output) {
     float gpu_time;
     cudaEventElapsedTime(&gpu_time, start, stop);
     float total_pipeline_time =
-        (detection.timestamp.toNSec() - enqueuedFrameStamp.toNSec()) / 1000000.0f;
+        (detection.timestamp.toNSec() - processedFrameStamp.toNSec()) / 1000000.0f;
     if (TIME_LOGGING)
         ROS_INFO("Total frame processing time: %.2f (GPU: %.2f) Total Pipeline Time: %.2f",
                  detection.processingTime, gpu_time, total_pipeline_time);
@@ -428,7 +432,14 @@ int main(int argc, char **argv) {
 
         if (cudaStreamQuery(0) == cudaSuccess) {
             // start next GPU pass if already possible
-            if (newImagePreprocessed) {
+
+            // A new image was processed, else the stream would be blocked.
+            processedFrameID = enqueuedFrameID;
+            processedFrameStamp = enqueuedFrameStamp;
+            processedFrameArrivalStamp = enqueuedFrameArrivalStamp;
+
+            if (newImagePreprocessed) { // this is only called when a  new image arrives, but not
+                                        // necessarily when the pipeline finished
                 cudaEventRecord(start, 0);
                 doGPUpass(preprocessedFrame, first);
                 cudaEventRecord(stop, 0);
@@ -439,9 +450,9 @@ int main(int argc, char **argv) {
                 enqueuedFrameArrivalStamp = preprocessedFrameArrivalStamp;
             }
 
-            if (postprocessedFrameID != enqueuedFrameID) {
+            if (postprocessedFrameID != processedFrameID) {
                 postprocessTRTdetections(gpu_output); // only do this once
-                postprocessedFrameID = enqueuedFrameID;
+                postprocessedFrameID = processedFrameID;
             }
         }
 

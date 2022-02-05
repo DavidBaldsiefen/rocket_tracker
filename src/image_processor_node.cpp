@@ -164,10 +164,6 @@ void doGPUpass(float *inputArray, bool skipFirstMemcpy) {
     // Execute everything that necessarily requires the GPU in one go
     // All on default Stream (0)
     // first, copy the output, _then_ do input and forward
-    if (!skipFirstMemcpy) {
-        cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
-                        cudaMemcpyDeviceToHost, 0);
-    }
     cudaMemcpyAsync(buffers[inputIndex], inputArray, input_size * sizeof(float),
                     cudaMemcpyHostToDevice, 0);
     context->enqueueV2(buffers, 0, nullptr);
@@ -437,6 +433,10 @@ int main(int argc, char **argv) {
             processedFrameID = enqueuedFrameID;
             processedFrameStamp = enqueuedFrameStamp;
             processedFrameArrivalStamp = enqueuedFrameArrivalStamp;
+            if (!first) {
+                cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex],
+                                output_size * sizeof(float), cudaMemcpyDeviceToHost, 0);
+            }
 
             if (newImagePreprocessed) { // this is only called when a  new image arrives, but not
                                         // necessarily when the pipeline finished

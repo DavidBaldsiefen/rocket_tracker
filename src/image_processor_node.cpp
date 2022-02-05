@@ -77,16 +77,16 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
 
     int highest_conf_index = 0;
     int highest_conf_label = 0;
-    float highest_conf = 0.0f;
-    for (unsigned long index = 0; index < output_size; index += dimensions) {
+    float highest_conf = 0.4f;
+    for (int index = 0; index < output_size; index += dimensions) {
         float confidence = cpu_output[index + confidenceIndex];
-        if (confidence <= 0.4f) {
-            continue;
-        }
 
         // for multiple classes, combine the confidence with class confidences
         // for single class models, this step can be skipped
         if (num_classes > 1) {
+            if (confidence <= highest_conf) {
+                continue;
+            }
             for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
                 float combined_conf = cpu_output[index + j] * confidence;
                 if (combined_conf > highest_conf) {
@@ -99,7 +99,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             if (confidence > highest_conf) {
                 highest_conf = confidence;
                 highest_conf_index = index;
-                highest_conf_label = 6; // 5 + 1
+                highest_conf_label = 1;
             }
         }
     }
@@ -107,9 +107,9 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     // Evaluate results
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
-            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label - 5, highest_conf);
+            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
         detection->propability = highest_conf;
-        detection->classID = cpu_output[highest_conf_index + highest_conf_label];
+        detection->classID = highest_conf_label;
         detection->centerX = cpu_output[highest_conf_index];
         detection->centerY = cpu_output[highest_conf_index + 1];
         detection->width = cpu_output[highest_conf_index + 2];
@@ -175,9 +175,22 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     detection.frameID = msg.id;
     // total time between framecapture and detection being published:
     double detectionTime = (ros::Time::now().toNSec() - msg.stamp.toNSec()) / 1000000.0;
+
+    // FPS avg calculation
+    static int iterationcounter = 0;
+    static double totalTime = 0.0;
+    static double avg_fps = 0;
+    totalTime += detectionTime;
+    iterationcounter++;
+    if (iterationcounter >= 50) {
+        avg_fps = 1000 / (totalTime / 50);
+        totalTime = 0;
+        iterationcounter = 0;
+    }
+
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf) => %.1fFPS", detectionTime,
-                 msg.preprocessing_ms, 1000.0 / detectionTime);
+        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf) => %.1fFPS (Avg: %.1f)",
+                 detectionTime, msg.preprocessing_ms, 1000.0 / detectionTime, avg_fps);
 
     detectionPublisher.publish(detection);
 }

@@ -66,6 +66,9 @@ int main(int argc, char **argv) {
     ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
     ros::Rate r(target_fps); // Set loop rate for framegrabber
 
+    bool TIME_LOGGING;
+    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+
     uint frame_id = 0;
     while (ros::ok()) {
 
@@ -87,11 +90,9 @@ int main(int argc, char **argv) {
             cv::resize(videoFrame, videoFrame, cv::Size(640, 640));
         }
 
-        uint64_t time2 = ros::Time::now().toNSec();
-
         static int model_size = 640 * 640;
         std::vector<float> inputArray;
-        inputArray.resize(1 * 3 * model_size);
+        inputArray.reserve(1 * 3 * model_size);
 
         // for each is significantly faster than all other methods to traverse over the cv::Mat
         // (read online and confirmed myself)
@@ -103,6 +104,8 @@ int main(int argc, char **argv) {
             inputArray[model_size + index] = p[1] / 255.0f;
             inputArray[2 * model_size + index] = p[0] / 255.0f;
         });
+        if (TIME_LOGGING)
+            ROS_INFO("PRE FG: %.2f", (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0);
         // =============================================
         msg2.image = inputArray;
         msg2.id = frame_id;

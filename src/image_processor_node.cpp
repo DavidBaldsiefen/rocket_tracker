@@ -38,12 +38,12 @@ template <typename... Args> std::string string_format(const std::string &format,
     return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 }
 
-void preprocessImgTRT(std::vector<float> image, void *inputBuffer) {
+void preprocessImgTRT(std::vector<float> *image, void *inputBuffer) {
     // thanks to https://zhuanlan.zhihu.com/p/344810135
 
     uint64_t time = ros::Time::now().toNSec();
 
-    float *inputArray = &image[0];
+    float *inputArray = &(*image)[0];
 
     static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
     cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
@@ -149,7 +149,7 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image) {
     time_logging_string = "";
     uint64_t time = ros::Time::now().toNSec();
 
-    preprocessImgTRT(image, buffers[inputIndex]);
+    preprocessImgTRT(&image, buffers[inputIndex]);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -210,7 +210,7 @@ void inferRandomMats(int iterations) {
         generate(inputArray.begin(), inputArray.end(), std::rand);
 
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(inputArray, buffers[inputIndex]);
+        preprocessImgTRT(&inputArray, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();
@@ -260,8 +260,22 @@ void inferVideoInplace(std::string videopath, int iterations) {
             continue;
         }
 
+        std::vector<float> inputArray;
+        inputArray.reserve(1 * 3 * model_width * model_height);
+
+        // for each is significantly faster than all other methods to traverse over the cv::Mat
+        // (read online and confirmed myself)
+        videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+            // p[0-2] contains bgr data, position[0-1] the row-column location
+            // Incoming data is BGR, so convert to RGB in the process
+            int index = 640 * position[0] + position[1];
+            inputArray[index] = p[2] / 255.0f;
+            inputArray[model_width * model_height + index] = p[1] / 255.0f;
+            inputArray[2 * model_width * model_height + index] = p[0] / 255.0f;
+        });
+
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(videoFrame, buffers[inputIndex]);
+        preprocessImgTRT(&inputArray, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();

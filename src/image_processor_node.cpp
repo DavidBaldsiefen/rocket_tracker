@@ -31,15 +31,19 @@ static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 
-// Define an STL compatible allocator of ints that allocates from the managed_shared_memory.
+// Define an STL compatible allocator of floats that allocates from the managed_shared_memory.
 // This allocator will allow placing containers in the segment
 typedef boost::interprocess::allocator<float,
                                        boost::interprocess::managed_shared_memory::segment_manager>
-    ShmemAllocator;
+    ShmemAllocatorFloat;
+typedef boost::interprocess::allocator<unsigned long,
+                                       boost::interprocess::managed_shared_memory::segment_manager>
+    ShmemAllocatorLong;
 
 // Alias a vector that uses the previous STL-like allocator so that allocates
 // its values from the segment
-typedef boost::interprocess::vector<float, ShmemAllocator> FloatVector;
+typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
+typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
 boost::interprocess::managed_shared_memory segment;
 
@@ -488,8 +492,34 @@ int main(int argc, char **argv) {
 
     segment = boost::interprocess::managed_shared_memory(boost::interprocess::open_only,
                                                          "MySharedMemory");
+    FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
+    LongVector *notification_vector = segment.find<LongVector>("notification_vector").first;
+    unsigned long lastFrame = 42; // the first one should be 0
     // Main loop
-    ros::spin();
+    while (ros::ok()) {
+        // check memory for new data
+        if (notification_vector->at(0) != lastFrame) {
+            // process new image
+            unsigned long arrivalTime = ros::Time::now().toNSec();
+            rocket_tracker::detectionMSG detection;
+            double preTime, fwdTime, pstTime;
+            detection = processImage(img_vector, &preTime, &fwdTime, &pstTime);
+            detection.timestamp = ros::Time::now().toNSec() / 1000000.0;
+            detection.processingTime =
+                (ros::Time::now().toNSec() - notification_vector->at(1)) / 1000000.0;
+            detectionPublisher.publish(detection);
+            preTime += notification_vector->at(2) / 1000000.0;
+            if (TIME_LOGGING)
+                ROS_INFO(
+                    "Total detection time: %.2f [PRE: %.2lf FWD: %.2f PST: %.2f] Messaging: %.2lf",
+                    detection.processingTime, preTime, fwdTime, pstTime,
+                    (arrivalTime - (notification_vector->at(2) + notification_vector->at(1))) /
+                        1000000.0);
+
+            lastFrame = notification_vector->at(0);
+        }
+        // ros::spinOnce();
+    }
 
     // Shut everything down cleanly
     for (int i = 0; i < engine->getNbBindings(); i++) {

@@ -15,11 +15,15 @@ static cv::VideoCapture capture;
 // This allocator will allow placing containers in the segment
 typedef boost::interprocess::allocator<float,
                                        boost::interprocess::managed_shared_memory::segment_manager>
-    ShmemAllocator;
+    ShmemAllocatorFloat;
+typedef boost::interprocess::allocator<unsigned long,
+                                       boost::interprocess::managed_shared_memory::segment_manager>
+    ShmemAllocatorLong;
 
 // Alias a vector that uses the previous STL-like allocator so that allocates
 // its values from the segment
-typedef boost::interprocess::vector<float, ShmemAllocator> FloatVector;
+typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
+typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
 bool initCapture(std::string videopath) {
 
@@ -81,13 +85,19 @@ int main(int argc, char **argv) {
     // Create a new segment with given name and size
     shared_memory_object::remove("MySharedMemory");
     managed_shared_memory segment(create_only, "MySharedMemory",
-                                  1 * 2 * 3 * 640 * 640 * sizeof(float));
+                                  1 * 3 * 640 * 640 * sizeof(float) + 256 * sizeof(unsigned long));
 
     // Initialize shared memory STL-compatible allocator
-    const ShmemAllocator alloc_inst(segment.get_segment_manager());
+    const ShmemAllocatorFloat alloc_inst_float(segment.get_segment_manager());
+    const ShmemAllocatorLong alloc_inst_long(segment.get_segment_manager());
 
     // Construct a vector named "MyVector" in shared memory with argument alloc_inst
-    FloatVector *imageVector = segment.construct<FloatVector>("img_vector")(alloc_inst);
+    FloatVector *imageVector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
+    LongVector *notificationVector =
+        segment.construct<LongVector>("notification_vector")(alloc_inst_long);
+
+    imageVector->resize(1 * 3 * 640 * 640);
+    notificationVector->resize(3);
 
     // Main loop
     int target_fps;
@@ -144,6 +154,9 @@ int main(int argc, char **argv) {
                 imageVector->at(2 * model_size + index) = p[0] / 255.0f;
             });
 
+            notificationVector->at(1) = timestamp.toNSec();
+            notificationVector->at(2) = ros::Time::now().toNSec() - timestamp.toNSec();
+            notificationVector->at(0) = frame_id;
             // Notify IP of the new image
             msg2.preprocessing_ms = (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0;
             msg2.id = frame_id;

@@ -236,6 +236,7 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
     if (PERF_TEST) {
         ros::param::set("rocket_tracker/fg_fps_target", 50);
+        ROS_INFO("Performance test enabled. Frame-drop warnings are suppressed.");
     }
 
     // TensorRT
@@ -349,11 +350,12 @@ int main(int argc, char **argv) {
             detectionPublisher.publish(detection);
             preTime += preTimeFG / 1000000.0;
             // check for missed frames
-            bool droppedFrame = false;
+            int droppedFrames = 0;
             if (frameID - lastFrameID > 1 && frameID != 0) {
-                droppedFrame = true;
-                ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
-                         frameID);
+                droppedFrames = frameID - lastFrameID;
+                if (!PERF_TEST)
+                    ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
+                             frameID);
             }
             lastFrameID = frameID;
 
@@ -367,15 +369,13 @@ int main(int argc, char **argv) {
             // FPS avg calculation
             if (PERF_TEST) {
                 static int iterationcounter = 0;
-                static int droppedFrames = 0;
+                static int totalDroppedFrames = 0;
                 static double totalTime = 0, avg_fps = 0, avg_pre = 0, avg_fwd = 0, avg_pst = 0;
                 totalTime += detection.processingTime;
                 avg_pre += preTime;
                 avg_fwd += fwdTime;
                 avg_pst += pstTime;
-                if (droppedFrame) {
-                    droppedFrames++;
-                }
+                totalDroppedFrames += droppedFrames;
                 iterationcounter++;
                 if (iterationcounter >= 1000) {
                     avg_fps = 1000 / (totalTime / 1000.0);

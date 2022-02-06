@@ -106,8 +106,8 @@ void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
     }
 
     // actual fps based on frequenc of incoming messages in IP
-    static double lastTimestamp = msg.timestamp - 0.1; // subtract 0.1 to preent div/0
-    double actualFPS = (1000.0 / (msg.timestamp - lastTimestamp));
+    ros::Time lastTimestamp = msg.timestamp; // subtract 0.1 to preent div/0
+    double actualFPS = (1000.0 / ((msg.timestamp.toNSec() - lastTimestamp.toNSec()) / 1000000.0));
     lastTimestamp = msg.timestamp;
     ui->ip_fps_actual->setText(QString::number(actualFPS, 'f', 0) + QString("fps"));
 }

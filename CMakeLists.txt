@@ -104,7 +104,6 @@ endif()
 add_message_files(
   FILES
   detectionMSG.msg
-  image.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -206,14 +205,12 @@ add_library(${PROJECT_NAME}
 ## The recommended prefix ensures that target names across packages don't collide
 set(
   NODE_LIST
-  frame_grabber_node
   image_processor_node
   evaluator_node
 )
 
 set(
   REDUCED_NODE_LIST
-  frame_grabber_node
   image_processor_node
 )
 

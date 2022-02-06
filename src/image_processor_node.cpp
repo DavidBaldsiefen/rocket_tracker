@@ -11,11 +11,13 @@
 #include "NvInfer.h"
 
 static ros::Publisher detectionPublisher;
+static cv::VideoCapture capture;
 
 static void **buffers;
 nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
+static int32_t numBindings = 5;
 static int64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
 
 static int num_classes = 80; // COCO class count
@@ -39,8 +41,27 @@ template <typename... Args> std::string string_format(const std::string &format,
     return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 }
 
-void preprocessImgTRT(std::vector<float> *image, void *inputBuffer) {
-    float *inputArray = &(*image)[0];
+void preprocessImgTRT(cv::Mat *img, void *inputBuffer) {
+    // perform preprocessing
+    // only resize down
+    if (img->rows > model_height || img->cols > model_width) {
+        cv::resize(*img, *img, cv::Size(model_width, model_height));
+    }
+
+    static int model_size = model_width * model_height;
+    float *inputArray = new float[1 * 3 * model_size];
+
+    // for each is significantly faster than all other methods to traverse over the cv::Mat
+    // (read online and confirmed myself)
+    img->forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+        // p[0-2] contains bgr data, position[0-1] the row-column location
+        // Incoming data is BGR, so convert to RGB in the process
+        int index = model_height * position[0] + position[1];
+        inputArray[index] = p[2] / 255.0f;
+        inputArray[model_size + index] = p[1] / 255.0f;
+        inputArray[2 * model_size + index] = p[0] / 255.0f;
+    });
+
     static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
     cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
 }
@@ -123,10 +144,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
-rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preTime,
-                                          double *fwdTime, double *pstTime) {
-
-    uint64_t time1 = ros::Time::now().toNSec();
+void processImage(cv::Mat *frame, uint frameID, ros::Time frameStamp) {
 
     rocket_tracker::detectionMSG result;
     result.centerX = 0.0;
@@ -135,62 +153,33 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preT
     result.height = 0.0;
     result.classID = 0;
     result.propability = 0.0;
-    result.frameID = 0;
+    result.frameID = frameID;
 
-    preprocessImgTRT(&image, buffers[inputIndex]);
-
+    uint64_t time1 = ros::Time::now().toNSec();
+    preprocessImgTRT(frame, buffers[inputIndex]);
     uint64_t time2 = ros::Time::now().toNSec();
-
     context->executeV2(buffers); // Invoke synchronous inference
-
     uint64_t time3 = ros::Time::now().toNSec();
-
     postprocessTRTdetections(buffers[outputIndex], &result);
-
     uint64_t time4 = ros::Time::now().toNSec();
 
-    *preTime = (time2 - time1) / 1000000.0;
-    *fwdTime = (time3 - time2) / 1000000.0;
-    *pstTime = (time4 - time3) / 1000000.0;
-    return result;
-}
+    result.timestamp = ros::Time::now();
+    result.processingTime = (result.timestamp.toNSec() - frameStamp.toNSec()) / 1000000.0;
 
-void callbackFrameGrabber(const rocket_tracker::image &msg) {
-    // check for missed frames
-    static uint last_frame_id = msg.id;
-    bool dropped_frame = false;
-    if (msg.id - last_frame_id > 1 && msg.id != 0) {
-        dropped_frame = true;
-        ROS_WARN("Frame dropped from FG->IP: jumped from index %u to %u", last_frame_id, msg.id);
-    }
-    last_frame_id = msg.id;
-    uint64_t time = ros::Time::now().toNSec();
+    detectionPublisher.publish(result);
 
-    rocket_tracker::detectionMSG detection;
-    double preTime, fwdTime, pstTime;
-    detection = processImage(msg.image, &preTime, &fwdTime, &pstTime);
-
-    detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
-    detection.timestamp = time / 1000000.0;
-    detection.frameID = msg.id;
-
-    // Performance measurements
-    // total time between framecapture and detection being published:
-    double detectionTime = (ros::Time::now().toNSec() - msg.stamp.toNSec()) / 1000000.0;
-    preTime += msg.preprocessing_ms;
+    double preTime = (time2 - time1) / 1000000.0;
+    double fwdTime = (time3 - time2) / 1000000.0;
+    double pstTime = (time4 - time3) / 1000000.0;
 
     // FPS avg calculation
     if (PERF_TEST) {
         static int iterationcounter = 0;
-        static int droppedFrames = 0;
         static double totalTime = 0, avg_fps = 0, avg_pre = 0, avg_fwd = 0, avg_pst = 0;
-        totalTime += detectionTime;
+        totalTime += result.processingTime;
         avg_pre += preTime;
         avg_fwd += fwdTime;
         avg_pst += pstTime;
-        if (dropped_frame) {
-            droppedFrames++;
-        }
         iterationcounter++;
         if (iterationcounter >= 1000) {
             avg_fps = 1000 / (totalTime / 1000.0);
@@ -202,130 +191,35 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
 
             ROS_INFO("Results of performance measurement after 1000 frames:\nAVG FPS: %.1f AVG "
                      "PRE: %.2f AVG FWD: "
-                     "%.2f AVG PST: %.2f Dropped Frames: %d",
-                     avg_fps, avg_pre, avg_fwd, avg_pst, droppedFrames);
+                     "%.2f AVG PST: %.2f",
+                     avg_fps, avg_pre, avg_fwd, avg_pst);
 
             avg_pre = 0.0;
             avg_fwd = 0.0;
             avg_pst = 0.0;
-            droppedFrames = 0;
         }
     }
 
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f]", detectionTime,
-                 preTime, fwdTime, pstTime);
-
-    detectionPublisher.publish(detection);
+        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f]",
+                 result.processingTime, preTime, fwdTime, pstTime);
 }
 
-void inferRandomMats(int iterations) {
-    // Infers random matrices over n iterations
-
-    rocket_tracker::detectionMSG detection;
-
-    uint64_t pre = 0, fwd = 0, pst = 0;
-
-    for (int i = 0; i < iterations; i++) {
-        // create random input Array
-
-        std::srand(unsigned(std::time(nullptr)));
-        std::vector<float> inputArray;
-        inputArray.resize(1 * 3 * model_width * model_height);
-        generate(inputArray.begin(), inputArray.end(), std::rand);
-
-        uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(&inputArray, buffers[inputIndex]);
-        uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
-        uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
-        uint64_t time4 = ros::Time::now().toNSec();
-
-        pre += time2 - time1;
-        fwd += time3 - time2;
-        pst += time4 - time3;
-    }
-
-    // Evaluate timings
-    double total = (pre + fwd + pst) / 1000000.0;
-    double avgtotal = (total / iterations);
-    double avgpre = ((double)pre / iterations) / 1000000.0;
-    double avgfwd = ((double)fwd / iterations) / 1000000.0;
-    double avgpst = ((double)pst / iterations) / 1000000.0;
-    ROS_INFO(
-        "Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [%.2lf %.2lf %.2lf])",
-        iterations, total, avgtotal, avgpre, avgfwd, avgpst);
-}
-
-void inferVideoInplace(std::string videopath, int iterations) {
-    // Infers random matrices over n iterations
+bool initCapture(std::string videopath) {
 
     // Open video file
-    cv::VideoCapture capture;
-    ROS_INFO("Infering video inplace from %s", videopath.c_str());
+    ROS_INFO("Loading video from %s", videopath.c_str());
     capture = cv::VideoCapture(videopath);
     if (!capture.isOpened()) {
         capture.release();
         ROS_ERROR("Failed to open video capture! Provided path: %s", videopath.c_str());
-        return;
+        return false;
     }
-    cv::Mat videoFrame;
-    rocket_tracker::detectionMSG detection;
-
-    uint64_t pre = 0, fwd = 0, pst = 0;
-    int detections = 0;
-
-    for (int i = 0; i < iterations; i++) {
-        // create random matrix
-        if (!capture.read(videoFrame)) {
-            capture.set(cv::CAP_PROP_POS_FRAMES, 0);
-        }
-        if (videoFrame.empty()) {
-            continue;
-        }
-
-        std::vector<float> inputArray;
-        inputArray.reserve(1 * 3 * model_width * model_height);
-
-        // for each is significantly faster than all other methods to traverse over the cv::Mat
-        // (read online and confirmed myself)
-        videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
-            // p[0-2] contains bgr data, position[0-1] the row-column location
-            // Incoming data is BGR, so convert to RGB in the process
-            int index = 640 * position[0] + position[1];
-            inputArray[index] = p[2] / 255.0f;
-            inputArray[model_width * model_height + index] = p[1] / 255.0f;
-            inputArray[2 * model_width * model_height + index] = p[0] / 255.0f;
-        });
-
-        uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(&inputArray, buffers[inputIndex]);
-        uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
-        uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
-        uint64_t time4 = ros::Time::now().toNSec();
-
-        if (detection.propability > 0.4)
-            detections++;
-
-        pre += time2 - time1;
-        fwd += time3 - time2;
-        pst += time4 - time3;
-    }
-
-    capture.release();
-
-    // Evaluate timings
-    double total = (pre + fwd + pst) / 1000000.0;
-    double avgtotal = (total / iterations);
-    double avgpre = ((double)pre / iterations) / 1000000.0;
-    double avgfwd = ((double)fwd / iterations) / 1000000.0;
-    double avgpst = ((double)pst / iterations) / 1000000.0;
-    ROS_INFO("Performing inference for %d iterations took %.2lf ms, with %d items detected. (Avg: "
-             "%.2lf [%.2lf %.2lf %.2lf])",
-             iterations, total, detections, avgtotal, avgpre, avgfwd, avgpst);
+    // "publish" the video specs
+    ros::param::set("/rocket_tracker/input_fps", capture.get(cv::CAP_PROP_FPS));
+    ros::param::set("/rocket_tracker/input_width", capture.get(cv::CAP_PROP_FRAME_WIDTH));
+    ros::param::set("/rocket_tracker/input_height", capture.get(cv::CAP_PROP_FRAME_HEIGHT));
+    return true;
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -341,34 +235,12 @@ class Logger : public nvinfer1::ILogger {
     }
 } logger;
 
-int main(int argc, char **argv) {
-
-    ros::init(argc, argv, "IMAGEPROCESSOR");
-    ros::NodeHandle nh("~");
-
-    // Get weightfile path from arguments
-    std::string weightfilepath;
-    if (argc == 2) {
-        weightfilepath = argv[1];
-    } else {
-        ROS_ERROR("Invalid number of argument passed to image processor.");
-        ros::shutdown();
-        return 0;
-    }
-
-    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
-    ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
-    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
-    if (PERF_TEST) {
-        ros::param::set("rocket_tracker/fg_fps_target", 50);
-    }
-
-    // TensorRT
+bool initTensorRT(std::string enginePath) {
     ROS_INFO("Initializing TRT");
     long size;
     char *trtModelStream;
-    std::ifstream file(weightfilepath, std::ios::binary);
-    ROS_INFO("Loading engine from %s", weightfilepath.c_str());
+    std::ifstream file(enginePath, std::ios::binary);
+    ROS_INFO("Loading engine from %s", enginePath.c_str());
     if (file.good()) {
         file.seekg(0, file.end);
         size = file.tellg();
@@ -392,8 +264,9 @@ int main(int argc, char **argv) {
     inputIndex = engine->getBindingIndex("images");
     outputIndex = engine->getBindingIndex("output");
     ROS_INFO("Reading engine bindings:");
-    buffers = new void *[engine->getNbBindings()];
-    for (int i = 0; i < engine->getNbBindings(); i++) {
+    numBindings = engine->getNbBindings();
+    buffers = new void *[numBindings];
+    for (int i = 0; i < numBindings; i++) {
 
         std::string dimension_desc = " [";
         size_t size = 1;
@@ -435,41 +308,115 @@ int main(int argc, char **argv) {
                  "engine");
     }
 
-    ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
+    ROS_INFO("Model with %d classes and input size %dx%d loaded", num_classes, model_width,
              model_height);
     ros::param::set("/rocket_tracker/model_width", model_width);
     ros::param::set("/rocket_tracker/model_height", model_height);
     ros::param::set("/rocket_tracker/trt_ready", true);
 
     ROS_INFO("TRT initialized");
-    ROS_INFO("Warming up over 100 iterations with random mats");
-    inferRandomMats(100);
-    std::string videopath;
+}
 
-    int testiterations = 0;
-    ros::param::get("/rocket_tracker/testiterations", testiterations);
-    if (testiterations > 0) {
-        ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
-        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
-                                       "/home/david/Downloads/silent_launches.mp4");
-        inferVideoInplace(videopath, testiterations);
+int main(int argc, char **argv) {
+
+    ros::init(argc, argv, "IMAGEPROCESSOR");
+    ros::NodeHandle nh("~");
+
+    // Get weightfile path from arguments
+    std::string enginePath;
+    if (argc == 2) {
+        enginePath = argv[1];
+    } else {
+        ROS_ERROR("Invalid number of argument passed to image processor.");
+        ros::shutdown();
+        return 0;
     }
 
-    // Creating image subscriber
-    ros::Subscriber subimg = nh.subscribe("/image_topic_2", 1, &callbackFrameGrabber);
+    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+    ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
+    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
+
+    // TensorRT
+    initTensorRT(enginePath);
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
+    // Creating image-transport publisher for GUI
+    image_transport::ImageTransport it(nh);
+    // queuesize = fps * 2, so there is a 2 seconds buffer to publish
+    image_transport::Publisher pubimg =
+        it.advertise("/image_topic", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
+
+    // Prepare video
+    std::string videopath = "";
+    ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
+                                   "/home/david/Downloads/silent_launches.mp4");
+    initCapture(videopath);
+
     // Main loop
-    ros::spin();
+    int target_fps;
+    ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
+    if (PERF_TEST) {
+        target_fps = 50;
+    }
+    ros::Rate r(target_fps); // Set loop rate for framegrabber
+
+    sensor_msgs::ImagePtr msg;
+    cv::Mat videoFrame;
+    uint frame_id = 0;
+
+    while (ros::ok) {
+
+        if (!capture.read(videoFrame)) {
+            ROS_INFO("End of video reached - resetting to first frame.");
+            capture.set(cv::CAP_PROP_POS_FRAMES, 0);
+            frame_id = 0;
+            continue;
+        }
+        ros::Time timestamp = ros::Time::now();
+
+        processImage(&videoFrame, frame_id, timestamp);
+
+        // publish videoframe
+        msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
+        msg->header.stamp = timestamp;
+        msg->header.seq = frame_id;
+        pubimg.publish(msg);
+        frame_id++;
+
+        // check for parameter updates
+        static int new_target_fps = target_fps;
+        if (ros::param::getCached("rocket_tracker/fg_fps_target", new_target_fps) &&
+            (new_target_fps != target_fps)) {
+            target_fps = new_target_fps;
+            r = ros::Rate(target_fps);
+        }
+        static std::string new_videopath = videopath;
+        if (ros::param::getCached("rocket_tracker/videopath", new_videopath) &&
+            (new_videopath != videopath)) {
+            capture.release();
+            if (initCapture(new_videopath)) {
+                videopath = new_videopath;
+            } else {
+                initCapture(videopath);
+                ROS_WARN("Loading video from %s failed. Reverting to old path %s",
+                         new_videopath.c_str(), videopath.c_str());
+                new_videopath = videopath;
+                ros::param::set("/rocket_tracker/videopath", videopath);
+            }
+        }
+
+        ros::spinOnce();
+        r.sleep();
+    }
 
     // Shut everything down cleanly
-    for (int i = 0; i < engine->getNbBindings(); i++) {
+    for (int i = 0; i < numBindings; i++) {
         cudaFreeHost(buffers[i]);
     }
     ros::shutdown();
-    subimg.shutdown();
+    pubimg.shutdown();
     detectionPublisher.shutdown();
     nh.shutdown();
     return 0;

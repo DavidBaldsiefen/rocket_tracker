@@ -158,7 +158,9 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preT
 void callbackFrameGrabber(const rocket_tracker::image &msg) {
     // check for missed frames
     static uint last_frame_id = msg.id;
-    if (msg.id - last_frame_id > 1) {
+    static bool dropped_frame = false;
+    if (msg.id - last_frame_id > 1 && msg.id != 0) {
+        dropped_frame = true;
         ROS_WARN("Frame dropped from FG->IP: jumped from index %u to %u", last_frame_id, msg.id);
     }
     last_frame_id = msg.id;
@@ -180,11 +182,15 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     // FPS avg calculation
     if (PERF_TEST) {
         static int iterationcounter = 0;
+        static int droppedFrames = 0;
         static double totalTime = 0, avg_fps = 0, avg_pre = 0, avg_fwd = 0, avg_pst = 0;
         totalTime += detectionTime;
         avg_pre += preTime;
         avg_fwd += fwdTime;
         avg_pst += pstTime;
+        if (dropped_frame) {
+            droppedFrames++;
+        }
         iterationcounter++;
         if (iterationcounter >= 1000) {
             avg_fps = 1000 / (totalTime / 1000.0);
@@ -196,12 +202,13 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
 
             ROS_INFO("Results of performance measurement after 1000 frames:\nAVG FPS: %.1f AVG "
                      "PRE: %.2f AVG FWD: "
-                     "%.2f AVG PST: %.2f",
-                     avg_fps, avg_pre, avg_fwd, avg_pst);
+                     "%.2f AVG PST: %.2f Dropped Frames: %d",
+                     avg_fps, avg_pre, avg_fwd, avg_pst, droppedFrames);
 
             avg_pre = 0.0;
             avg_fwd = 0.0;
             avg_pst = 0.0;
+            droppedFrames = 0;
         }
     }
 
@@ -352,6 +359,9 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
+    if (PERF_TEST) {
+        ros::param::set("rocket_tracker/fg_fps_target", 50);
+    }
 
     // TensorRT
     ROS_INFO("Initializing TRT");

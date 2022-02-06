@@ -106,6 +106,7 @@ int main(int argc, char **argv) {
     bool TRT_ready = false;
     int model_width = 640;
     int model_height = 640;
+    int model_size = 640 * 640;
     int trt_initialized = false;
 
     uint frame_id = 0;
@@ -122,7 +123,8 @@ int main(int argc, char **argv) {
             TRT_ready) {
             ros::param::get("rocket_tracker/model_width", model_width);
             ros::param::get("rocket_tracker/model_height", model_height);
-            imageVector->resize(1 * 3 * model_width * model_height);
+            model_size = model_width * model_height;
+            imageVector->resize(1 * 3 * model_size);
             trt_initialized = true;
         }
         ros::Time timestamp = ros::Time::now();
@@ -134,10 +136,6 @@ int main(int argc, char **argv) {
             if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
                 cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
             }
-
-            static int model_size = model_width * model_height;
-            std::vector<float> inputArray;
-            inputArray.resize(1);
 
             // for each is significantly faster than all other methods to traverse over the cv::Mat
             // (read online and confirmed myself)

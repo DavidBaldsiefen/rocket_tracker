@@ -8,12 +8,10 @@
     <arg name="weights" default="$(find rocket_tracker)/weights/yolov5n.engine"/> # path to the weightfile
     <arg name="logtime" default="false"/> # print timings to console
     <arg name="logtrace" default="false"/> # print additional trace to console
-    <arg name="testiterations" default="0"/> # perform performance test upon startup
     <arg name="perftest" default="false"/> # perform performance test
 
     <param name="rocket_tracker/time_logging" value="$(arg logtime)" />
     <param name="rocket_tracker/trace_logging" value="$(arg logtrace)" />
-    <param name="rocket_tracker/testiterations" value="$(arg testiterations)" />
     <param name="rocket_tracker/performance_test" value="$(arg perftest)" />
     
     #Starting framegrabber node

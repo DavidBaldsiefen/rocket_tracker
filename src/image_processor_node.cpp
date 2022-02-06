@@ -124,10 +124,10 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     }
 
     // Evaluate results
+    detection->propability = highest_conf;
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
-        detection->propability = highest_conf;
         detection->classID = highest_conf_label;
         detection->centerX = cpu_output[highest_conf_index];
         detection->centerY = cpu_output[highest_conf_index + 1];
@@ -142,19 +142,10 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
-rocket_tracker::detectionMSG processImage(FloatVector *image, double *preTime, double *fwdTime,
-                                          double *pstTime) {
+void processImage(FloatVector *image, double *preTime, double *fwdTime, double *pstTime,
+                  rocket_tracker::detectionMSG *detection) {
 
     uint64_t time1 = ros::Time::now().toNSec();
-
-    rocket_tracker::detectionMSG result;
-    result.centerX = 0.0;
-    result.centerY = 0.0;
-    result.width = 0.0;
-    result.height = 0.0;
-    result.classID = 0;
-    result.propability = 0.0;
-    result.frameID = 0;
 
     preprocessImgTRT(image, buffers[inputIndex]);
 
@@ -164,14 +155,13 @@ rocket_tracker::detectionMSG processImage(FloatVector *image, double *preTime, d
 
     uint64_t time3 = ros::Time::now().toNSec();
 
-    postprocessTRTdetections(buffers[outputIndex], &result);
+    postprocessTRTdetections(buffers[outputIndex], detection);
 
     uint64_t time4 = ros::Time::now().toNSec();
 
     *preTime = (time2 - time1) / 1000000.0;
     *fwdTime = (time3 - time2) / 1000000.0;
     *pstTime = (time4 - time3) / 1000000.0;
-    return result;
 }
 
 void inferRandomMats(int iterations) {
@@ -211,76 +201,6 @@ void inferRandomMats(int iterations) {
     ROS_INFO(
         "Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [%.2lf %.2lf %.2lf])",
         iterations, total, avgtotal, avgpre, avgfwd, avgpst);
-}
-
-void inferVideoInplace(std::string videopath, int iterations) {
-    // Infers random matrices over n iterations
-
-    // Open video file
-    cv::VideoCapture capture;
-    ROS_INFO("Infering video inplace from %s", videopath.c_str());
-    capture = cv::VideoCapture(videopath);
-    if (!capture.isOpened()) {
-        capture.release();
-        ROS_ERROR("Failed to open video capture! Provided path: %s", videopath.c_str());
-        return;
-    }
-    cv::Mat videoFrame;
-    rocket_tracker::detectionMSG detection;
-
-    uint64_t pre = 0, fwd = 0, pst = 0;
-    int detections = 0;
-
-    for (int i = 0; i < iterations; i++) {
-        // create random matrix
-        if (!capture.read(videoFrame)) {
-            capture.set(cv::CAP_PROP_POS_FRAMES, 0);
-        }
-        if (videoFrame.empty()) {
-            continue;
-        }
-
-        std::vector<float> inputArray;
-        inputArray.reserve(1 * 3 * model_width * model_height);
-
-        // for each is significantly faster than all other methods to traverse over the cv::Mat
-        // (read online and confirmed myself)
-        videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
-            // p[0-2] contains bgr data, position[0-1] the row-column location
-            // Incoming data is BGR, so convert to RGB in the process
-            int index = 640 * position[0] + position[1];
-            inputArray[index] = p[2] / 255.0f;
-            inputArray[model_width * model_height + index] = p[1] / 255.0f;
-            inputArray[2 * model_width * model_height + index] = p[0] / 255.0f;
-        });
-
-        uint64_t time1 = ros::Time::now().toNSec();
-        // preprocessImgTRT(&inputArray, buffers[inputIndex]);
-        uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
-        uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
-        uint64_t time4 = ros::Time::now().toNSec();
-
-        if (detection.propability > 0.4)
-            detections++;
-
-        pre += time2 - time1;
-        fwd += time3 - time2;
-        pst += time4 - time3;
-    }
-
-    capture.release();
-
-    // Evaluate timings
-    double total = (pre + fwd + pst) / 1000000.0;
-    double avgtotal = (total / iterations);
-    double avgpre = ((double)pre / iterations) / 1000000.0;
-    double avgfwd = ((double)fwd / iterations) / 1000000.0;
-    double avgpst = ((double)pst / iterations) / 1000000.0;
-    ROS_INFO("Performing inference for %d iterations took %.2lf ms, with %d items detected. (Avg: "
-             "%.2lf [%.2lf %.2lf %.2lf])",
-             iterations, total, detections, avgtotal, avgpre, avgfwd, avgpst);
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -399,16 +319,6 @@ int main(int argc, char **argv) {
     ROS_INFO("TRT initialized");
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(0);
-    std::string videopath;
-
-    int testiterations = 0;
-    ros::param::get("/rocket_tracker/testiterations", testiterations);
-    if (testiterations > 0) {
-        ROS_INFO("Testing %d iterations inplace with video frames", testiterations);
-        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
-                                       "/home/david/Downloads/silent_launches.mp4");
-        inferVideoInplace(videopath, testiterations);
-    }
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
@@ -417,36 +327,40 @@ int main(int argc, char **argv) {
                                                          "MySharedMemory");
     FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
     LongVector *notification_vector = segment.find<LongVector>("notification_vector").first;
+
+    // All inference variables
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
-    // Main loop
+    unsigned long frameID, frameStamp, preTimeFG;
+    double preTime, fwdTime, pstTime;
+    bool droppedFrame = false;
+    rocket_tracker::detectionMSG detection;
+
+    // Main loop. There are no subscribers, so spinning is not required
     while (ros::ok()) {
         // check memory for new data
         if (notification_vector->at(0) != lastFrameID) {
             // process new image
-            unsigned long frameID = notification_vector->at(0);
-            bool droppedFrame = false;
+            frameID = notification_vector->at(0);
             if (frameID - lastFrameID > 1 && frameID != 0) {
                 droppedFrame = true;
                 ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
                          frameID);
             }
             lastFrameID = frameID;
-            unsigned long frameStamp = notification_vector->at(1);
-            unsigned long preTimeFG = notification_vector->at(2);
-            unsigned long arrivalTime = ros::Time::now().toNSec();
-            rocket_tracker::detectionMSG detection;
-            double preTime, fwdTime, pstTime;
-            detection = processImage(img_vector, &preTime, &fwdTime, &pstTime);
+            frameStamp = notification_vector->at(1);
+            preTimeFG = notification_vector->at(2);
+            processImage(img_vector, &preTime, &fwdTime, &pstTime, &detection);
             detection.timestamp = ros::Time::now();
             detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
+            detection.frameID = frameID;
             detectionPublisher.publish(detection);
             preTime += preTimeFG / 1000000.0;
             // Time logging statistics
             if (TIME_LOGGING)
-                ROS_INFO(
-                    "Total detection time: %.2f [PRE: %.2lf FWD: %.2f PST: %.2f] Messaging: %.2lf",
-                    detection.processingTime, preTime, fwdTime, pstTime,
-                    (arrivalTime - (preTimeFG + frameStamp)) / 1000000.0);
+                ROS_INFO("Total detection time: %.2f [PRE: %.2lf FWD: %.2f PST: %.2f] PRE: [%.2lf "
+                         "%.2lf]",
+                         detection.processingTime, preTime, fwdTime, pstTime, preTimeFG / 1000000.0,
+                         preTime - (preTimeFG / 1000000.0));
 
             // FPS avg calculation
             if (PERF_TEST) {
@@ -483,7 +397,6 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        ros::spinOnce();
     }
 
     // Shut everything down cleanly

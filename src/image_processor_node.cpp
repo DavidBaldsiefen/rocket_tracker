@@ -387,14 +387,14 @@ int main(int argc, char **argv) {
                         "Results of performance measurement after 1000 frames:\nAVG FPS: %.1f AVG "
                         "PRE: %.2f AVG FWD: "
                         "%.2f AVG PST: %.2f Dropped Frames: %d",
-                        avg_fps, avg_pre, avg_fwd, avg_pst, droppedFrames);
+                        avg_fps, avg_pre, avg_fwd, avg_pst, totalDroppedFrames);
 
                     totalTime = 0;
                     iterationcounter = 0;
                     avg_pre = 0.0;
                     avg_fwd = 0.0;
                     avg_pst = 0.0;
-                    droppedFrames = 0;
+                    totalDroppedFrames = 0;
                 }
             }
         }

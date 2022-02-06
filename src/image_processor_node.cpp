@@ -61,7 +61,7 @@ template <typename... Args> std::string string_format(const std::string &format,
 void preprocessImgTRT(FloatVector *image, void *inputBuffer) {
     float *inputArray = &(*image)[0];
     static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
-    cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
+    cudaMemcpyAsync(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice, 0);
 }
 
 void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
@@ -71,9 +71,10 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     uint64_t time = ros::Time::now().toNSec();
 
     static size_t output_buffer_size = output_size * sizeof(float);
-    std::vector<float> cpu_output(output_size);
+    std::vector<float> cpu_output;
+    cpu_output.reserve(output_size);
 
-    cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size, cudaMemcpyDeviceToHost);
+    cudaMemcpyAsync(cpu_output.data(), outputBuffer, output_buffer_size, cudaMemcpyDeviceToHost, 0);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -151,7 +152,7 @@ void processImage(FloatVector *image, double *preTime, double *fwdTime, double *
 
     uint64_t time2 = ros::Time::now().toNSec();
 
-    context->executeV2(buffers); // Invoke synchronous inference
+    context->enqueueV2(buffers, 0, nullptr); // Invoke synchronous inference
 
     uint64_t time3 = ros::Time::now().toNSec();
 

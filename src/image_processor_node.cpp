@@ -339,14 +339,7 @@ int main(int argc, char **argv) {
         // check memory for new data
         if (notification_vector->at(0) != lastFrameID) {
             // process new image
-            bool droppedFrame = false;
             frameID = notification_vector->at(0);
-            if (frameID - lastFrameID > 1 && frameID != 0) {
-                droppedFrame = true;
-                ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
-                         frameID);
-            }
-            lastFrameID = frameID;
             frameStamp = notification_vector->at(1);
             preTimeFG = notification_vector->at(2);
             processImage(img_vector, &preTime, &fwdTime, &pstTime, &detection);
@@ -355,6 +348,15 @@ int main(int argc, char **argv) {
             detection.frameID = frameID;
             detectionPublisher.publish(detection);
             preTime += preTimeFG / 1000000.0;
+            // check for missed frames
+            bool droppedFrame = false;
+            if (frameID - lastFrameID > 1 && frameID != 0) {
+                droppedFrame = true;
+                ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
+                         frameID);
+            }
+            lastFrameID = frameID;
+
             // Time logging statistics
             if (TIME_LOGGING)
                 ROS_INFO("Total detection time: %.2f [PRE: %.2lf FWD: %.2f PST: %.2f] PRE: [%.2lf "
@@ -376,7 +378,6 @@ int main(int argc, char **argv) {
                 }
                 iterationcounter++;
                 if (iterationcounter >= 1000) {
-                    ROS_INFO("Totaltime: %.2f", totalTime);
                     avg_fps = 1000 / (totalTime / 1000.0);
                     avg_pre /= 1000.0;
                     avg_fwd /= 1000.0;

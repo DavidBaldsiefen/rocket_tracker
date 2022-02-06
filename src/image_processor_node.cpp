@@ -53,8 +53,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     static size_t output_buffer_size = output_size * sizeof(float);
     std::vector<float> cpu_output(output_size);
 
-    cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size,
-               cudaMemcpyDeviceToHost); // Could postprocessing be done on gpu?
+    cudaMemcpy(cpu_output.data(), outputBuffer, output_buffer_size, cudaMemcpyDeviceToHost);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -92,7 +91,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
                 if (combined_conf > highest_conf) {
                     highest_conf = combined_conf;
                     highest_conf_index = index;
-                    highest_conf_label = j;
+                    highest_conf_label = j - 5;
                 }
             }
         } else {

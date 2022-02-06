@@ -181,9 +181,10 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     }
 
     // Find the vector using the c-string name
+    ros::Time t1 = ros::Time::now();
     FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
     // Open the managed segment
-    ros::Time t1 = ros::Time::now();
+
     last_frame_id = msg.id;
     uint64_t time = ros::Time::now().toNSec();
 
@@ -234,8 +235,11 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     }
 
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f] NewPre: %.2f",
-                 detectionTime, preTime, fwdTime, pstTime, (time - t1.toNSec()) / 1000000.0);
+        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f] PRE[%.2f %.2f %.2f] "
+                 "Messaging: %.2f",
+                 detectionTime, preTime, fwdTime, pstTime, msg.preprocessing_ms,
+                 (time - t1.toNSec()) / 1000000.0, preTime - msg.preprocessing_ms,
+                 t1.toNSec() / 1000000.0 - (msg.stamp.toNSec() / 1000000.0 + msg.preprocessing_ms));
 
     detectionPublisher.publish(detection);
 }

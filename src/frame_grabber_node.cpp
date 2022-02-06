@@ -81,7 +81,6 @@ int main(int argc, char **argv) {
             ROS_INFO("End of video reached - resetting to first frame.");
             capture.set(cv::CAP_PROP_POS_FRAMES, 0);
             frame_id = 0;
-            ros::Duration(0.5).sleep();
             continue;
         }
         // wait for tensorrt to be ready before publishing frames

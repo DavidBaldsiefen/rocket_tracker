@@ -25,6 +25,7 @@ static int model_height = 640;
 static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
+static bool PERF_TEST = false;
 
 template <typename... Args> std::string string_format(const std::string &format, Args... args) {
     // from https://stackoverflow.com/a/26221725
@@ -122,9 +123,10 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
-rocket_tracker::detectionMSG processImage(std::vector<float> image) {
+rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preTime,
+                                          double *fwdTime, double *pstTime) {
 
-    uint64_t time0 = ros::Time::now().toNSec();
+    uint64_t time1 = ros::Time::now().toNSec();
 
     rocket_tracker::detectionMSG result;
     result.centerX = 0.0;
@@ -134,9 +136,6 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image) {
     result.classID = 0;
     result.propability = 0.0;
     result.frameID = 0;
-
-    time_logging_string = "";
-    uint64_t time = ros::Time::now().toNSec();
 
     preprocessImgTRT(&image, buffers[inputIndex]);
 
@@ -149,11 +148,10 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image) {
     postprocessTRTdetections(buffers[outputIndex], &result);
 
     uint64_t time4 = ros::Time::now().toNSec();
-    if (TIME_LOGGING) {
-        ROS_INFO("TOTAL: %.2lf [PRE: %.2lf FWD: %.2lf PST: %.2lf %s]", (time4 - time0) / 1000000.0,
-                 (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0,
-                 (time4 - time3) / 1000000.0, time_logging_string.c_str());
-    }
+
+    *preTime = (time2 - time1) / 1000000.0;
+    *fwdTime = (time3 - time2) / 1000000.0;
+    *pstTime = (time4 - time3) / 1000000.0;
     return result;
 }
 
@@ -167,29 +165,49 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     uint64_t time = ros::Time::now().toNSec();
 
     rocket_tracker::detectionMSG detection;
-    detection = processImage(msg.image);
+    double preTime, fwdTime, pstTime;
+    detection = processImage(msg.image, &preTime, &fwdTime, &pstTime);
 
     detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
     detection.timestamp = time / 1000000.0;
     detection.frameID = msg.id;
+
+    // Performance measurements
     // total time between framecapture and detection being published:
     double detectionTime = (ros::Time::now().toNSec() - msg.stamp.toNSec()) / 1000000.0;
+    preTime += msg.preprocessing_ms;
 
     // FPS avg calculation
-    static int iterationcounter = 0;
-    static double totalTime = 0.0;
-    static double avg_fps = 0;
-    totalTime += detectionTime;
-    iterationcounter++;
-    if (iterationcounter >= 50) {
-        avg_fps = 1000 / (totalTime / 50);
-        totalTime = 0;
-        iterationcounter = 0;
+    if (PERF_TEST) {
+        static int iterationcounter = 0;
+        static double totalTime = 0, avg_fps = 0, avg_pre = 0, avg_fwd = 0, avg_pst = 0;
+        totalTime += detectionTime;
+        avg_pre += preTime;
+        avg_fwd += fwdTime;
+        avg_pst += pstTime;
+        iterationcounter++;
+        if (iterationcounter >= 1000) {
+            avg_fps = 1000 / (totalTime / 1000.0);
+            avg_pre /= 1000.0;
+            avg_fwd /= 1000.0;
+            avg_pst /= 1000.0;
+            totalTime = 0;
+            iterationcounter = 0;
+
+            ROS_INFO("Results of performance measurement after 1000 frames:\nAVG FPS: %.1f AVG "
+                     "PRE: %.2f AVG FWD: "
+                     "%.2f AVG PST: %.2f",
+                     avg_fps, avg_pre, avg_fwd, avg_pst);
+
+            avg_pre = 0.0;
+            avg_fwd = 0.0;
+            avg_pst = 0.0;
+        }
     }
 
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf (FG Preprocessing: %.2lf) => %.1fFPS (Avg: %.1f)",
-                 detectionTime, msg.preprocessing_ms, 1000.0 / detectionTime, avg_fps);
+        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f]", detectionTime,
+                 preTime, fwdTime, pstTime);
 
     detectionPublisher.publish(detection);
 }
@@ -333,6 +351,7 @@ int main(int argc, char **argv) {
 
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
+    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
 
     // TensorRT
     ROS_INFO("Initializing TRT");

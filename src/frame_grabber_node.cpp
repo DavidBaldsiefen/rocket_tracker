@@ -6,7 +6,6 @@
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <opencv4/opencv2/opencv.hpp>
-#include <rocket_tracker/image.h>
 #include <ros/ros.h>
 
 static cv::VideoCapture capture;
@@ -68,8 +67,6 @@ int main(int argc, char **argv) {
     // queuesize = fps * 2, so there is a 2 seconds buffer to publish
     image_transport::Publisher pubimg =
         it.advertise("/image_topic", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
-    ros::Publisher pubimg2 = nh.advertise<rocket_tracker::image>(
-        "/image_topic_2", (uint32_t)capture.get(cv::CAP_PROP_FPS) * 2);
 
     // Open video capture
     if (!initCapture(videopath)) {
@@ -77,7 +74,6 @@ int main(int argc, char **argv) {
     }
 
     sensor_msgs::ImagePtr msg;
-    rocket_tracker::image msg2;
     cv::Mat videoFrame;
 
     // shared memory space
@@ -156,12 +152,8 @@ int main(int argc, char **argv) {
 
             notificationVector->at(1) = timestamp.toNSec();
             notificationVector->at(2) = ros::Time::now().toNSec() - timestamp.toNSec();
-            notificationVector->at(0) = frame_id;
-            // Notify IP of the new image
-            msg2.preprocessing_ms = (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0;
-            msg2.id = frame_id;
-            msg2.stamp = timestamp;
-            pubimg2.publish(msg2);
+            notificationVector->at(0) =
+                frame_id; // the frameId increases last so the remaining memory is already prepared
         }
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
@@ -199,6 +191,8 @@ int main(int argc, char **argv) {
     capture.release();
     ros::shutdown();
     pubimg.shutdown();
+    segment.destroy<FloatVector>("img_vector");
+    segment.destroy<LongVector>("notification_vector");
     boost::interprocess::shared_memory_object::remove("MySharedMemory");
     nh.shutdown();
     return 0;

@@ -6,4 +6,4 @@ int32 classID
 uint32 frameID
 float64 propability
 float64 processingTime
-float64 timestamp
+time timestamp

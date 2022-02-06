@@ -108,7 +108,6 @@ endif()
 add_message_files(
   FILES
   detectionMSG.msg
-  image.msg
 )
 
 ## Generate services in the 'srv' folder

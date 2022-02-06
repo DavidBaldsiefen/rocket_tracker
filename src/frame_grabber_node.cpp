@@ -1,3 +1,8 @@
+#include <boost/interprocess/allocators/allocator.hpp>
+#include <boost/interprocess/containers/vector.hpp>
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <image_transport/image_transport.h>
 #include <opencv4/opencv2/opencv.hpp>
@@ -5,6 +10,16 @@
 #include <ros/ros.h>
 
 static cv::VideoCapture capture;
+
+// Define an STL compatible allocator of floats that allocates from the managed_shared_memory.
+// This allocator will allow placing containers in the segment
+typedef boost::interprocess::allocator<float,
+                                       boost::interprocess::managed_shared_memory::segment_manager>
+    ShmemAllocator;
+
+// Alias a vector that uses the previous STL-like allocator so that allocates
+// its values from the segment
+typedef boost::interprocess::vector<float, ShmemAllocator> FloatVector;
 
 bool initCapture(std::string videopath) {
 
@@ -61,6 +76,19 @@ int main(int argc, char **argv) {
     rocket_tracker::image msg2;
     cv::Mat videoFrame;
 
+    // shared memory space
+    using namespace boost::interprocess;
+    // Create a new segment with given name and size
+    shared_memory_object::remove("MySharedMemory");
+    managed_shared_memory segment(create_only, "MySharedMemory",
+                                  1 * 2 * 3 * 640 * 640 * sizeof(float));
+
+    // Initialize shared memory STL-compatible allocator
+    const ShmemAllocator alloc_inst(segment.get_segment_manager());
+
+    // Construct a vector named "MyVector" in shared memory with argument alloc_inst
+    FloatVector *imageVector = segment.construct<FloatVector>("img_vector")(alloc_inst);
+
     // Main loop
     int target_fps;
     ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
@@ -84,41 +112,44 @@ int main(int argc, char **argv) {
             continue;
         }
         // wait for tensorrt to be ready before publishing frames
-        if (!trt_initialized && ros::param::getCached("rocket_tracker/videopath", TRT_ready) &&
+        if (!trt_initialized && ros::param::getCached("rocket_tracker/trt_ready", TRT_ready) &&
             TRT_ready) {
             ros::param::get("rocket_tracker/model_width", model_width);
             ros::param::get("rocket_tracker/model_height", model_height);
-            trt_initialized = false;
+            imageVector->resize(1 * 3 * model_width * model_height);
+            trt_initialized = true;
         }
         ros::Time timestamp = ros::Time::now();
 
         // publish videoframe
         // perform preprocessing
         // only resize down
-        if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
-            cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
+        if (trt_initialized) {
+            if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
+                cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
+            }
+
+            static int model_size = model_width * model_height;
+            std::vector<float> inputArray;
+            inputArray.resize(1);
+
+            // for each is significantly faster than all other methods to traverse over the cv::Mat
+            // (read online and confirmed myself)
+            videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+                // p[0-2] contains bgr data, position[0-1] the row-column location
+                // Incoming data is BGR, so convert to RGB in the process
+                int index = model_height * position[0] + position[1];
+                imageVector->at(index) = p[2] / 255.0f;
+                imageVector->at(model_size + index) = p[1] / 255.0f;
+                imageVector->at(2 * model_size + index) = p[0] / 255.0f;
+            });
+
+            // Notify IP of the new image
+            msg2.preprocessing_ms = (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0;
+            msg2.id = frame_id;
+            msg2.stamp = timestamp;
+            pubimg2.publish(msg2);
         }
-
-        static int model_size = model_width * model_height;
-        std::vector<float> inputArray;
-        inputArray.resize(1 * 3 * model_size);
-
-        // for each is significantly faster than all other methods to traverse over the cv::Mat
-        // (read online and confirmed myself)
-        videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
-            // p[0-2] contains bgr data, position[0-1] the row-column location
-            // Incoming data is BGR, so convert to RGB in the process
-            int index = model_height * position[0] + position[1];
-            inputArray[index] = p[2] / 255.0f;
-            inputArray[model_size + index] = p[1] / 255.0f;
-            inputArray[2 * model_size + index] = p[0] / 255.0f;
-        });
-        msg2.preprocessing_ms = (ros::Time::now().toNSec() - timestamp.toNSec()) / 1000000.0;
-        // =============================================
-        msg2.image = inputArray;
-        msg2.id = frame_id;
-        msg2.stamp = timestamp;
-        pubimg2.publish(msg2);
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
         msg->header.seq = frame_id;
@@ -155,6 +186,7 @@ int main(int argc, char **argv) {
     capture.release();
     ros::shutdown();
     pubimg.shutdown();
+    boost::interprocess::shared_memory_object::remove("MySharedMemory");
     nh.shutdown();
     return 0;
 }

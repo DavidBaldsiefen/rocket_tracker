@@ -1,3 +1,7 @@
+#include <boost/interprocess/containers/vector.hpp>
+#include <boost/interprocess/managed_shared_memory.hpp>
+#include <boost/interprocess/mapped_region.hpp>
+#include <boost/interprocess/shared_memory_object.hpp>
 #include <cuda_runtime.h>
 #include <cv_bridge/cv_bridge.h>
 #include <fstream>
@@ -27,6 +31,18 @@ static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 
+// Define an STL compatible allocator of ints that allocates from the managed_shared_memory.
+// This allocator will allow placing containers in the segment
+typedef boost::interprocess::allocator<float,
+                                       boost::interprocess::managed_shared_memory::segment_manager>
+    ShmemAllocator;
+
+// Alias a vector that uses the previous STL-like allocator so that allocates
+// its values from the segment
+typedef boost::interprocess::vector<float, ShmemAllocator> FloatVector;
+
+boost::interprocess::managed_shared_memory segment;
+
 template <typename... Args> std::string string_format(const std::string &format, Args... args) {
     // from https://stackoverflow.com/a/26221725
     int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1; // Extra space for '\0'
@@ -39,7 +55,7 @@ template <typename... Args> std::string string_format(const std::string &format,
     return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 }
 
-void preprocessImgTRT(std::vector<float> *image, void *inputBuffer) {
+void preprocessImgTRT(FloatVector *image, void *inputBuffer) {
     float *inputArray = &(*image)[0];
     static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
     cudaMemcpy(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice);
@@ -123,8 +139,8 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
             string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
-rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preTime,
-                                          double *fwdTime, double *pstTime) {
+rocket_tracker::detectionMSG processImage(FloatVector *image, double *preTime, double *fwdTime,
+                                          double *pstTime) {
 
     uint64_t time1 = ros::Time::now().toNSec();
 
@@ -137,7 +153,7 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preT
     result.propability = 0.0;
     result.frameID = 0;
 
-    preprocessImgTRT(&image, buffers[inputIndex]);
+    preprocessImgTRT(image, buffers[inputIndex]);
 
     uint64_t time2 = ros::Time::now().toNSec();
 
@@ -163,12 +179,17 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
         dropped_frame = true;
         ROS_WARN("Frame dropped from FG->IP: jumped from index %u to %u", last_frame_id, msg.id);
     }
+
+    // Find the vector using the c-string name
+    FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
+    // Open the managed segment
+    ros::Time t1 = ros::Time::now();
     last_frame_id = msg.id;
     uint64_t time = ros::Time::now().toNSec();
 
     rocket_tracker::detectionMSG detection;
     double preTime, fwdTime, pstTime;
-    detection = processImage(msg.image, &preTime, &fwdTime, &pstTime);
+    detection = processImage(img_vector, &preTime, &fwdTime, &pstTime);
 
     detection.processingTime = (ros::Time::now().toNSec() - time) / 1000000.0;
     detection.timestamp = time / 1000000.0;
@@ -213,8 +234,8 @@ void callbackFrameGrabber(const rocket_tracker::image &msg) {
     }
 
     if (TIME_LOGGING)
-        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f]", detectionTime,
-                 preTime, fwdTime, pstTime);
+        ROS_INFO("Total detection time: %.2lf [PRE: %.2lf FWD: %.2f PST: %.2f] NewPre: %.2f",
+                 detectionTime, preTime, fwdTime, pstTime, (time - t1.toNSec()) / 1000000.0);
 
     detectionPublisher.publish(detection);
 }
@@ -235,7 +256,7 @@ void inferRandomMats(int iterations) {
         generate(inputArray.begin(), inputArray.end(), std::rand);
 
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(&inputArray, buffers[inputIndex]);
+        // preprocessImgTRT(&inputArray, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();
@@ -300,7 +321,7 @@ void inferVideoInplace(std::string videopath, int iterations) {
         });
 
         uint64_t time1 = ros::Time::now().toNSec();
-        preprocessImgTRT(&inputArray, buffers[inputIndex]);
+        // preprocessImgTRT(&inputArray, buffers[inputIndex]);
         uint64_t time2 = ros::Time::now().toNSec();
         context->executeV2(buffers); // Invoke synchronous inference
         uint64_t time3 = ros::Time::now().toNSec();
@@ -443,7 +464,7 @@ int main(int argc, char **argv) {
 
     ROS_INFO("TRT initialized");
     ROS_INFO("Warming up over 100 iterations with random mats");
-    inferRandomMats(100);
+    inferRandomMats(0);
     std::string videopath;
 
     int testiterations = 0;
@@ -461,6 +482,8 @@ int main(int argc, char **argv) {
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
+    segment = boost::interprocess::managed_shared_memory(boost::interprocess::open_only,
+                                                         "MySharedMemory");
     // Main loop
     ros::spin();
 

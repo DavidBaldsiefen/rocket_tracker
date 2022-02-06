@@ -332,7 +332,6 @@ int main(int argc, char **argv) {
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
     unsigned long frameID, frameStamp, preTimeFG;
     double preTime, fwdTime, pstTime;
-    bool droppedFrame = false;
     rocket_tracker::detectionMSG detection;
 
     // Main loop. There are no subscribers, so spinning is not required
@@ -340,6 +339,7 @@ int main(int argc, char **argv) {
         // check memory for new data
         if (notification_vector->at(0) != lastFrameID) {
             // process new image
+            bool droppedFrame = false;
             frameID = notification_vector->at(0);
             if (frameID - lastFrameID > 1 && frameID != 0) {
                 droppedFrame = true;

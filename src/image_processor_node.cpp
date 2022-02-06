@@ -158,7 +158,7 @@ rocket_tracker::detectionMSG processImage(std::vector<float> image, double *preT
 void callbackFrameGrabber(const rocket_tracker::image &msg) {
     // check for missed frames
     static uint last_frame_id = msg.id;
-    static bool dropped_frame = false;
+    bool dropped_frame = false;
     if (msg.id - last_frame_id > 1 && msg.id != 0) {
         dropped_frame = true;
         ROS_WARN("Frame dropped from FG->IP: jumped from index %u to %u", last_frame_id, msg.id);

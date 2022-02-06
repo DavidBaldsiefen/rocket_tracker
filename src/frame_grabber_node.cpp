@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
 
         static int model_size = model_width * model_height;
         std::vector<float> inputArray;
-        inputArray.reserve(1 * 3 * model_size);
+        inputArray.resize(1 * 3 * model_size);
 
         // for each is significantly faster than all other methods to traverse over the cv::Mat
         // (read online and confirmed myself)

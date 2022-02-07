@@ -128,7 +128,7 @@ void processImage(float *image, double *cudaTime, double *pstTime,
     cudaMemcpyAsync(buffers[inputIndex], image, input_size * sizeof(float), cudaMemcpyHostToDevice,
                     0);
 
-    context->enqueueV2(buffers, 0, nullptr); // Invoke synchronous inference
+    context->enqueueV2(buffers, 0, nullptr); // Invoke asynchronous inference
 
     std::vector<float> gpu_output(output_size);
 
@@ -145,6 +145,8 @@ void processImage(float *image, double *cudaTime, double *pstTime,
 
 void inferRandomMats(int iterations) {
     // Infers random matrices over n iterations
+    if (iterations <= 0)
+        return;
 
     rocket_tracker::detectionMSG detection;
 
@@ -252,7 +254,7 @@ int main(int argc, char **argv) {
             dimension_desc += std::to_string(dims.d[j]) + " ";
         }
 
-        auto binding_size = size * 1 * sizeof(float);
+        auto binding_size = size * sizeof(float);
         if (cudaMallocHost(&buffers[i], binding_size) != cudaSuccess) {
             ROS_WARN("Failed to allocate pinned memory! Switching to pageable memory instead.");
             if (cudaMalloc(&buffers[i], binding_size) != cudaSuccess) {

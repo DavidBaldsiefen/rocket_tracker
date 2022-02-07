@@ -19,13 +19,13 @@ static void **buffers;
 static nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
-static int64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
+static uint64_t input_size = 1 * 3 * 640 * 640;
+static uint64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
 
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
 
-static std::string time_logging_string = "";
 static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
@@ -58,36 +58,20 @@ template <typename... Args> std::string string_format(const std::string &format,
     return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
 }
 
-void preprocessImgTRT(FloatVector *image, void *inputBuffer) {
-    float *inputArray = &(*image)[0];
-    static size_t input_size = 1 * 3 * model_width * model_height * sizeof(float);
-    cudaMemcpyAsync(inputBuffer, inputArray, input_size, cudaMemcpyHostToDevice, 0);
-}
-
-void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *detection) {
+void postprocessTRTdetections(std::vector<float> *model_output,
+                              rocket_tracker::detectionMSG *detection) {
 
     // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
-
-    uint64_t time = ros::Time::now().toNSec();
-
-    static size_t output_buffer_size = output_size * sizeof(float);
-    std::vector<float> cpu_output;
-    cpu_output.reserve(output_size);
-
-    cudaMemcpyAsync(cpu_output.data(), outputBuffer, output_buffer_size, cudaMemcpyDeviceToHost, 0);
-
-    uint64_t time2 = ros::Time::now().toNSec();
-
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    unsigned long numPredictions = cpu_output.size() / dimensions; // 25.200
+    unsigned long numPredictions = model_output->size() / dimensions; // 25.200
     unsigned long confidenceIndex = 4;
     unsigned long labelStartIndex = 5;
 
     if (TRACE_LOGGING) {
         std::string outputstring = "";
         for (int i = 0; i < 6; i++) {
-            outputstring += std::to_string(cpu_output[i]) + " ";
+            outputstring += std::to_string(model_output->at(i)) + " ";
             if (i == 3 || i == 4) {
                 outputstring += "| ";
             }
@@ -99,7 +83,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
     int highest_conf_label = 0;
     float highest_conf = 0.4f;
     for (int index = 0; index < output_size; index += dimensions) {
-        float confidence = cpu_output[index + confidenceIndex];
+        float confidence = model_output->at(index + confidenceIndex);
 
         // for multiple classes, combine the confidence with class confidences
         // for single class models, this step can be skipped
@@ -108,7 +92,7 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
                 continue;
             }
             for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-                float combined_conf = cpu_output[index + j] * confidence;
+                float combined_conf = model_output->at(index + j) * confidence;
                 if (combined_conf > highest_conf) {
                     highest_conf = combined_conf;
                     highest_conf_index = index;
@@ -130,39 +114,33 @@ void postprocessTRTdetections(void *outputBuffer, rocket_tracker::detectionMSG *
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
         detection->classID = highest_conf_label;
-        detection->centerX = cpu_output[highest_conf_index];
-        detection->centerY = cpu_output[highest_conf_index + 1];
-        detection->width = cpu_output[highest_conf_index + 2];
-        detection->height = cpu_output[highest_conf_index + 3];
+        detection->centerX = model_output->at(highest_conf_index);
+        detection->centerY = model_output->at(highest_conf_index + 1);
+        detection->width = model_output->at(highest_conf_index + 2);
+        detection->height = model_output->at(highest_conf_index + 3);
     }
-
-    uint64_t time3 = ros::Time::now().toNSec();
-
-    if (TIME_LOGGING)
-        time_logging_string +=
-            string_format("[%.2lf %.2lf]", (time2 - time) / 1000000.0, (time3 - time2) / 1000000.0);
 }
 
-void processImage(FloatVector *image, double *preTime, double *fwdTime, double *pstTime,
+void processImage(float *image, double *cudaTime, double *pstTime,
                   rocket_tracker::detectionMSG *detection) {
 
-    uint64_t time1 = ros::Time::now().toNSec();
-
-    preprocessImgTRT(image, buffers[inputIndex]);
-
-    uint64_t time2 = ros::Time::now().toNSec();
+    unsigned long time0 = ros::Time::now().toNSec();
+    cudaMemcpyAsync(buffers[inputIndex], image, input_size * sizeof(float), cudaMemcpyHostToDevice,
+                    0);
 
     context->enqueueV2(buffers, 0, nullptr); // Invoke synchronous inference
 
-    uint64_t time3 = ros::Time::now().toNSec();
+    std::vector<float> gpu_output(output_size);
 
-    postprocessTRTdetections(buffers[outputIndex], detection);
+    cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
+                    cudaMemcpyDeviceToHost, 0);
 
-    uint64_t time4 = ros::Time::now().toNSec();
+    unsigned long time1 = ros::Time::now().toNSec();
 
-    *preTime = (time2 - time1) / 1000000.0;
-    *fwdTime = (time3 - time2) / 1000000.0;
-    *pstTime = (time4 - time3) / 1000000.0;
+    postprocessTRTdetections(&gpu_output, detection);
+
+    *pstTime = (ros::Time::now().toNSec() - time1) / 1000000.0;
+    *cudaTime = (time1 - time0) / 1000000.0;
 }
 
 void inferRandomMats(int iterations) {
@@ -170,7 +148,8 @@ void inferRandomMats(int iterations) {
 
     rocket_tracker::detectionMSG detection;
 
-    uint64_t pre = 0, fwd = 0, pst = 0;
+    double cudaTime, pstTime;
+    double totalCuda, totalPst;
 
     for (int i = 0; i < iterations; i++) {
         // create random input Array
@@ -179,29 +158,20 @@ void inferRandomMats(int iterations) {
         std::vector<float> inputArray;
         inputArray.resize(1 * 3 * model_width * model_height);
         generate(inputArray.begin(), inputArray.end(), std::rand);
-
-        uint64_t time1 = ros::Time::now().toNSec();
-        // preprocessImgTRT(&inputArray, buffers[inputIndex]);
-        uint64_t time2 = ros::Time::now().toNSec();
-        context->executeV2(buffers); // Invoke synchronous inference
-        uint64_t time3 = ros::Time::now().toNSec();
-        postprocessTRTdetections(buffers[outputIndex], &detection);
-        uint64_t time4 = ros::Time::now().toNSec();
-
-        pre += time2 - time1;
-        fwd += time3 - time2;
-        pst += time4 - time3;
+        inputArray.resize(1 * 3 * model_width * model_height);
+        processImage(&inputArray[0], &cudaTime, &pstTime, &detection);
+        totalCuda += cudaTime;
+        totalPst += pstTime;
     }
 
     // Evaluate timings
-    double total = (pre + fwd + pst) / 1000000.0;
-    double avgtotal = (total / iterations);
-    double avgpre = ((double)pre / iterations) / 1000000.0;
-    double avgfwd = ((double)fwd / iterations) / 1000000.0;
-    double avgpst = ((double)pst / iterations) / 1000000.0;
-    ROS_INFO(
-        "Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [%.2lf %.2lf %.2lf])",
-        iterations, total, avgtotal, avgpre, avgfwd, avgpst);
+    double total = totalCuda + totalPst;
+    double avgtotal = total / iterations;
+    double avgCuda = totalCuda / iterations;
+    double avgPst = totalPst / iterations;
+    ROS_INFO("Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [CUDA: %.2lf PST: "
+             "%.2lf])",
+             iterations, total, avgtotal, avgCuda, avgPst);
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -301,6 +271,7 @@ int main(int argc, char **argv) {
         } else if (i == inputIndex) {
             model_width = dims.d[dims.nbDims - 2];
             model_height = dims.d[dims.nbDims - 1];
+            input_size = size;
         }
 
         ROS_INFO("%s", dimension_desc.c_str());
@@ -333,8 +304,9 @@ int main(int argc, char **argv) {
     // All inference variables
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
     unsigned long frameID, frameStamp, preTimeFG;
-    double preTime, fwdTime, pstTime;
+    double cudaTime, pstTime;
     rocket_tracker::detectionMSG detection;
+    ros::Time throughputTimer = ros::Time::now();
 
     // Main loop. There are no subscribers, so spinning is not required
     while (ros::ok()) {
@@ -344,15 +316,14 @@ int main(int argc, char **argv) {
             frameID = notification_vector->at(0);
             frameStamp = notification_vector->at(1);
             preTimeFG = notification_vector->at(2);
-            processImage(img_vector, &preTime, &fwdTime, &pstTime, &detection);
+            processImage(&(*img_vector)[0], &cudaTime, &pstTime, &detection);
             detection.timestamp = ros::Time::now();
             detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
             detection.frameID = frameID;
             detectionPublisher.publish(detection);
-            preTime += preTimeFG / 1000000.0;
             // check for missed frames
             int droppedFrames = 0;
-            if (frameID - lastFrameID > 1 && frameID != 0) {
+            if (frameID - lastFrameID > 1) {
                 droppedFrames = frameID - lastFrameID;
                 if (!PERF_TEST)
                     ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
@@ -362,40 +333,42 @@ int main(int argc, char **argv) {
 
             // Time logging statistics
             if (TIME_LOGGING)
-                ROS_INFO("Total detection time: %.2f [PRE: %.2lf FWD: %.2f PST: %.2f] PRE: [%.2lf "
-                         "%.2lf]",
-                         detection.processingTime, preTime, fwdTime, pstTime, preTimeFG / 1000000.0,
-                         preTime - (preTimeFG / 1000000.0));
+                ROS_INFO("Total detection time: %.2f [PRE: %.2lf CUDA: %.2f PST: %.2f]",
+                         detection.processingTime, preTimeFG / 1000000.0, cudaTime, pstTime);
 
             // FPS avg calculation
             if (PERF_TEST) {
                 static int iterationcounter = 0;
                 static int totalDroppedFrames = 0;
-                static double totalTime = 0, avg_fps = 0, avg_pre = 0, avg_fwd = 0, avg_pst = 0;
-                totalTime += detection.processingTime;
-                avg_pre += preTime;
-                avg_fwd += fwdTime;
+                static double avgLatency = 0, avg_pre = 0, avg_cuda = 0, avg_pst = 0;
+                avgLatency += detection.processingTime;
+                avg_pre += preTimeFG / 1000000.0;
+                avg_cuda += cudaTime;
                 avg_pst += pstTime;
                 totalDroppedFrames += droppedFrames;
                 iterationcounter++;
                 if (iterationcounter >= 1000) {
-                    avg_fps = 1000 / (totalTime / 1000.0);
+                    avgLatency /= 1000.0;
                     avg_pre /= 1000.0;
-                    avg_fwd /= 1000.0;
+                    avg_cuda /= 1000.0;
                     avg_pst /= 1000.0;
+                    double throughput =
+                        1000.0 * 1000.0 /
+                        ((ros::Time::now().toNSec() - throughputTimer.toNSec()) / 1000000.0);
 
-                    ROS_INFO(
-                        "Results of performance measurement after 1000 frames:\nAVG FPS: %.1f AVG "
-                        "PRE: %.2f AVG FWD: "
-                        "%.2f AVG PST: %.2f Dropped Frames: %d",
-                        avg_fps, avg_pre, avg_fwd, avg_pst, totalDroppedFrames);
+                    ROS_INFO("Results of performance measurement after 1000 frames:\nAVG Latency: "
+                             "%.2fms [PRE: %.2f CUDA: %.2f PST: %.2f] Throughput: %.1fFPS Dropped "
+                             "Frames: %d",
+                             avgLatency, avg_pre, avg_cuda, avg_pst, throughput,
+                             totalDroppedFrames);
 
-                    totalTime = 0;
+                    avgLatency = 0;
                     iterationcounter = 0;
                     avg_pre = 0.0;
-                    avg_fwd = 0.0;
+                    avg_cuda = 0.0;
                     avg_pst = 0.0;
                     totalDroppedFrames = 0;
+                    throughputTimer = ros::Time::now();
                 }
             }
         }

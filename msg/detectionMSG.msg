@@ -3,7 +3,7 @@ int32 centerY
 int32 width
 int32 height
 int32 classID
-uint32 frameID
+uint64 frameID
 float64 propability
 float64 processingTime
 time timestamp

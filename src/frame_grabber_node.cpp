@@ -109,13 +109,12 @@ int main(int argc, char **argv) {
     int model_size = 640 * 640;
     int trt_initialized = false;
 
-    uint frame_id = 0;
+    unsigned long frame_id = 0;
     while (ros::ok()) {
 
         if (!capture.read(videoFrame)) {
             ROS_INFO("End of video reached - resetting to first frame.");
             capture.set(cv::CAP_PROP_POS_FRAMES, 0);
-            frame_id = 0;
             continue;
         }
         // wait for tensorrt to be ready before publishing frames

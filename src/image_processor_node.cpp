@@ -125,15 +125,15 @@ void processImage(float *image, double *cudaTime, double *pstTime,
                   rocket_tracker::detectionMSG *detection) {
 
     unsigned long time0 = ros::Time::now().toNSec();
+
     cudaMemcpyAsync(buffers[inputIndex], image, input_size * sizeof(float), cudaMemcpyHostToDevice,
                     0);
 
     context->enqueueV2(buffers, 0, nullptr); // Invoke asynchronous inference
 
-    std::vector<float> gpu_output(output_size);
-
-    cudaMemcpyAsync(gpu_output.data(), buffers[outputIndex], output_size * sizeof(float),
-                    cudaMemcpyDeviceToHost, 0);
+    float *pFloat2 = static_cast<float *>(buffers[outputIndex]);
+    std::vector<float> gpu_output(pFloat2, pFloat2 + output_size);
+    cudaStreamSynchronize(0);
 
     unsigned long time1 = ros::Time::now().toNSec();
 

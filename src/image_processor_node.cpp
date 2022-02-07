@@ -125,9 +125,8 @@ void processImage(float *image, double *cudaTime, double *pstTime,
                   rocket_tracker::detectionMSG *detection) {
 
     unsigned long time0 = ros::Time::now().toNSec();
-
-    cudaMemcpyAsync(buffers[inputIndex], image, input_size * sizeof(float), cudaMemcpyHostToDevice,
-                    0);
+    float *pFloat = static_cast<float *>(buffers[inputIndex]);
+    std::copy(image, image + input_size, pFloat);
 
     context->enqueueV2(buffers, 0, nullptr); // Invoke asynchronous inference
 

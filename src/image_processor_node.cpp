@@ -99,10 +99,11 @@ void processImage(double *cudaTime, double *pstTime, rocket_tracker::detectionMS
     context->enqueueV2(buffers, 0, nullptr);
 
     float *pFloat2 = static_cast<float *>(buffers[outputIndex]);
-    std::vector<float> gpu_output(pFloat2, pFloat2 + output_size);
 
-    // wait for inference to finish. The gpu_output vector was created in the meantime
+    // wait for inference to finish
     cudaStreamSynchronize(0);
+
+    std::vector<float> gpu_output(pFloat2, pFloat2 + output_size);
 
     unsigned long time1 = ros::Time::now().toNSec();
 

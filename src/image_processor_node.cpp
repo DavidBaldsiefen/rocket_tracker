@@ -131,7 +131,7 @@ void processImage(float *image, double *preTime, double *cudaTime, double *pstTi
     // perform postprocessing & identify most confident detection
     postprocessTRTdetections(&gpu_output, detection);
 
-    *pstTime = (ros::Time::now().toNSec() - time1) / 1000000.0;
+    *pstTime = (ros::Time::now().toNSec() - time2) / 1000000.0;
     *preTime = (time1 - time0) / 1000000.0;
     *cudaTime = (time2 - time1) / 1000000.0;
 }

@@ -44,18 +44,6 @@ typedef boost::interprocess::allocator<unsigned long,
 typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
 typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
-template <typename... Args> std::string string_format(const std::string &format, Args... args) {
-    // from https://stackoverflow.com/a/26221725
-    int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1; // Extra space for '\0'
-    if (size_s <= 0) {
-        throw std::runtime_error("Error during formatting.");
-    }
-    auto size = static_cast<size_t>(size_s);
-    auto buf = std::make_unique<char[]>(size);
-    std::snprintf(buf.get(), size, format.c_str(), args...);
-    return std::string(buf.get(), buf.get() + size - 1); // We don't want the '\0' inside
-}
-
 void postprocessTRTdetections(std::vector<float> *model_output,
                               rocket_tracker::detectionMSG *detection) {
 

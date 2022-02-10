@@ -76,25 +76,10 @@ int main(int argc, char **argv) {
     sensor_msgs::ImagePtr msg;
     cv::Mat videoFrame;
 
-    // Create a new shared memory segment with given name and size. Size is a little bit larger to
-    // have some buffer
-    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
-    boost::interprocess::managed_shared_memory segment(
-        boost::interprocess::create_only, "rocket_tracker_shared_memory",
-        1 * 3 * 640 * 640 * sizeof(float) + 256 * sizeof(unsigned long));
-
-    // Initialize shared memory STL-compatible allocator
-    const ShmemAllocatorFloat alloc_inst_float(segment.get_segment_manager());
-    const ShmemAllocatorLong alloc_inst_long(segment.get_segment_manager());
-
-    // Construct vectors for the image data in shared memory
-    FloatVector *img_vector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
-    LongVector *notification_vector =
-        segment.construct<LongVector>("notification_vector")(alloc_inst_long);
-
-    // resize both vectors
-    img_vector->resize(1 * 3 * 640 * 640);
-    notification_vector->resize(3);
+    // Shared memory pointers
+    boost::interprocess::managed_shared_memory segment;
+    FloatVector *img_vector;
+    LongVector *notification_vector;
 
     // Get & set frame grabber fps target
     int target_fps;
@@ -126,7 +111,13 @@ int main(int argc, char **argv) {
             ros::param::get("rocket_tracker/model_width", model_width);
             ros::param::get("rocket_tracker/model_height", model_height);
             model_size = model_width * model_height;
-            img_vector->resize(1 * 3 * model_size);
+
+            // initialize shared memory segment and access shared vectors
+            segment = boost::interprocess::managed_shared_memory(boost::interprocess::open_only,
+                                                                 "rocket_tracker_shared_memory");
+            img_vector = segment.find<FloatVector>("img_vector").first;
+            notification_vector = segment.find<LongVector>("notification_vector").first;
+
             trt_initialized = true;
         }
         ros::Time timestamp = ros::Time::now();
@@ -192,9 +183,6 @@ int main(int argc, char **argv) {
     capture.release();
     ros::shutdown();
     pubimg.shutdown();
-    segment.destroy<FloatVector>("img_vector");
-    segment.destroy<LongVector>("notification_vector");
-    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
     nh.shutdown();
     return 0;
 }

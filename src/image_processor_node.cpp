@@ -207,8 +207,7 @@ void inferRandomMats(int iterations) {
 
     rocket_tracker::detectionMSG detection;
 
-    double cudaTime, pstTime;
-    double totalCuda, totalPst;
+    double cudaTime = 0.0, pstTime = 0.0, totalCuda = 0.0, totalPst = 0.0;
 
     for (int i = 0; i < iterations; i++) {
         // create random input Array
@@ -348,18 +347,32 @@ int main(int argc, char **argv) {
     ros::param::set("/rocket_tracker/model_height", model_height);
     ros::param::set("/rocket_tracker/trt_ready", true);
 
+    // Create a new shared memory segment with given name and size. Size is a little bit larger to
+    // have some buffer
+    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
+    boost::interprocess::managed_shared_memory segment(
+        boost::interprocess::create_only, "rocket_tracker_shared_memory",
+        input_size * sizeof(float) + 256 * sizeof(unsigned long));
+
+    // Initialize shared memory STL-compatible allocator
+    const ShmemAllocatorFloat alloc_inst_float(segment.get_segment_manager());
+    const ShmemAllocatorLong alloc_inst_long(segment.get_segment_manager());
+
+    // Construct vectors for the image data in shared memory
+    FloatVector *img_vector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
+    LongVector *notification_vector =
+        segment.construct<LongVector>("notification_vector")(alloc_inst_long);
+
+    // resize both vectors
+    img_vector->resize(input_size);
+    notification_vector->resize(3);
+
     ROS_INFO("TRT initialized");
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(100);
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
-
-    // Access shared memory
-    boost::interprocess::managed_shared_memory segment = boost::interprocess::managed_shared_memory(
-        boost::interprocess::open_only, "rocket_tracker_shared_memory");
-    FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
-    LongVector *notification_vector = segment.find<LongVector>("notification_vector").first;
 
     // Frame IDs
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
@@ -393,6 +406,9 @@ int main(int argc, char **argv) {
     for (int i = 0; i < engine->getNbBindings(); i++) {
         cudaFreeHost(buffers[i]);
     }
+    segment.destroy<FloatVector>("img_vector");
+    segment.destroy<LongVector>("notification_vector");
+    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
     ros::shutdown();
     detectionPublisher.shutdown();
     nh.shutdown();

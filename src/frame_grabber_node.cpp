@@ -88,13 +88,13 @@ int main(int argc, char **argv) {
     const ShmemAllocatorLong alloc_inst_long(segment.get_segment_manager());
 
     // Construct vectors for the image data in shared memory
-    FloatVector *imageVector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
-    LongVector *notificationVector =
+    FloatVector *img_vector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
+    LongVector *notification_vector =
         segment.construct<LongVector>("notification_vector")(alloc_inst_long);
 
     // resize both vectors
-    imageVector->resize(1 * 3 * 640 * 640);
-    notificationVector->resize(3);
+    img_vector->resize(1 * 3 * 640 * 640);
+    notification_vector->resize(3);
 
     // Get & set frame grabber fps target
     int target_fps;
@@ -126,7 +126,7 @@ int main(int argc, char **argv) {
             ros::param::get("rocket_tracker/model_width", model_width);
             ros::param::get("rocket_tracker/model_height", model_height);
             model_size = model_width * model_height;
-            imageVector->resize(1 * 3 * model_size);
+            img_vector->resize(1 * 3 * model_size);
             trt_initialized = true;
         }
         ros::Time timestamp = ros::Time::now();
@@ -143,15 +143,15 @@ int main(int argc, char **argv) {
                 // p[0-2] contains bgr data, position[0-1] the row-column location
                 // Incoming data is BGR, so convert to RGB in the process
                 int index = model_height * position[0] + position[1];
-                imageVector->at(index) = p[2] / 255.0f;
-                imageVector->at(model_size + index) = p[1] / 255.0f;
-                imageVector->at(2 * model_size + index) = p[0] / 255.0f;
+                img_vector->at(index) = p[2] / 255.0f;
+                img_vector->at(model_size + index) = p[1] / 255.0f;
+                img_vector->at(2 * model_size + index) = p[0] / 255.0f;
             });
 
             // Notify the IP that a new image is in the shared memory space
-            notificationVector->at(1) = timestamp.toNSec();
-            notificationVector->at(2) = ros::Time::now().toNSec() - timestamp.toNSec();
-            notificationVector->at(0) =
+            notification_vector->at(1) = timestamp.toNSec();
+            notification_vector->at(2) = ros::Time::now().toNSec() - timestamp.toNSec();
+            notification_vector->at(0) =
                 frame_id; // the frameId increases last so the remaining memory is already prepared
         }
 

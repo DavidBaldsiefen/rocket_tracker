@@ -19,8 +19,8 @@ static void **buffers;
 static nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
-static uint64_t input_size = 1 * 3 * 640 * 640;
-static uint64_t output_size = 1 * 25200 * 85; // default output size for YOLOv5
+static uint64_t input_size = 1 * 3 * 640 * 640; // default input size for YOLOv5
+static uint64_t output_size = 1 * 25200 * 85;   // default output size for YOLOv5
 
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
@@ -44,8 +44,6 @@ typedef boost::interprocess::allocator<unsigned long,
 typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
 typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
-boost::interprocess::managed_shared_memory segment;
-
 template <typename... Args> std::string string_format(const std::string &format, Args... args) {
     // from https://stackoverflow.com/a/26221725
     int size_s = std::snprintf(nullptr, 0, format.c_str(), args...) + 1; // Extra space for '\0'
@@ -64,10 +62,10 @@ void postprocessTRTdetections(std::vector<float> *model_output,
     // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
     unsigned long dimensions =
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    unsigned long numPredictions = model_output->size() / dimensions; // 25.200
-    unsigned long confidenceIndex = 4;
-    unsigned long labelStartIndex = 5;
+    const unsigned long confidenceIndex = 4;
+    const unsigned long labelStartIndex = 5;
 
+    // Trace-logging for debugging purposes
     if (TRACE_LOGGING) {
         std::string outputstring = "";
         for (int i = 0; i < 6; i++) {
@@ -81,7 +79,7 @@ void postprocessTRTdetections(std::vector<float> *model_output,
 
     int highest_conf_index = 0;
     int highest_conf_label = 0;
-    float highest_conf = 0.4f;
+    float highest_conf = 0.4f; // confidence threshold is 40%
     for (int index = 0; index < output_size; index += dimensions) {
         float confidence = model_output->at(index + confidenceIndex);
 
@@ -96,7 +94,7 @@ void postprocessTRTdetections(std::vector<float> *model_output,
                 if (combined_conf > highest_conf) {
                     highest_conf = combined_conf;
                     highest_conf_index = index;
-                    highest_conf_label = j - 5;
+                    highest_conf_label = j - labelStartIndex;
                 }
             }
         } else {
@@ -128,14 +126,18 @@ void processImage(float *image, double *cudaTime, double *pstTime,
     float *pFloat = static_cast<float *>(buffers[inputIndex]);
     std::copy(image, image + input_size, pFloat);
 
-    context->enqueueV2(buffers, 0, nullptr); // Invoke asynchronous inference
+    // Invoke asynchronous inference
+    context->enqueueV2(buffers, 0, nullptr);
 
     float *pFloat2 = static_cast<float *>(buffers[outputIndex]);
     std::vector<float> gpu_output(pFloat2, pFloat2 + output_size);
+
+    // wait for inference to finish. The gpu_output vector was created in the meantime
     cudaStreamSynchronize(0);
 
     unsigned long time1 = ros::Time::now().toNSec();
 
+    // perform postprocessing & identify most confident detection
     postprocessTRTdetections(&gpu_output, detection);
 
     *pstTime = (ros::Time::now().toNSec() - time1) / 1000000.0;
@@ -147,19 +149,21 @@ void handleNewFrame(unsigned long frameID, unsigned long frameStamp, unsigned lo
     rocket_tracker::detectionMSG detection;
     double cudaTime, pstTime;
 
+    // do the actual image processing
     processImage(image, &cudaTime, &pstTime, &detection);
     detection.timestamp = ros::Time::now();
     detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
     detection.frameID = frameID;
+
+    // publish the detection
     detectionPublisher.publish(detection);
-    // check for missed frames
 
     // Time logging statistics
     if (TIME_LOGGING)
         ROS_INFO("Total detection time: %.2f [PRE: %.2lf CUDA: %.2f PST: %.2f]",
                  detection.processingTime, preTimeFG / 1000000.0, cudaTime, pstTime);
 
-    // FPS avg calculation
+    // Performance test statistics
     if (PERF_TEST) {
         static int iterationcounter = 0;
         static int totalDroppedFrames = 0;
@@ -346,25 +350,29 @@ int main(int argc, char **argv) {
 
     ROS_INFO("TRT initialized");
     ROS_INFO("Warming up over 100 iterations with random mats");
-    inferRandomMats(0);
+    inferRandomMats(100);
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
-    segment = boost::interprocess::managed_shared_memory(boost::interprocess::open_only,
-                                                         "MySharedMemory");
+    // Access shared memory
+    boost::interprocess::managed_shared_memory segment = boost::interprocess::managed_shared_memory(
+        boost::interprocess::open_only, "rocket_tracker_shared_memory");
     FloatVector *img_vector = segment.find<FloatVector>("img_vector").first;
     LongVector *notification_vector = segment.find<LongVector>("notification_vector").first;
 
-    // All inference variables
+    // Frame IDs
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
     unsigned long frameID;
 
     // Main loop. There are no subscribers, so spinning is not required
     while (ros::ok()) {
+
         // check memory for new data
         if (notification_vector->at(0) != lastFrameID) {
+
             frameID = notification_vector->at(0);
+
             // check for dropped frames
             int droppedFrames = 0;
             if (frameID - lastFrameID > 1) {
@@ -375,6 +383,7 @@ int main(int argc, char **argv) {
             }
             lastFrameID = frameID;
 
+            // handle everything
             handleNewFrame(notification_vector->at(0), notification_vector->at(1),
                            notification_vector->at(2), &(*img_vector)[0], droppedFrames);
         }

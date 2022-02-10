@@ -1,7 +1,3 @@
-#include <boost/interprocess/containers/vector.hpp>
-#include <boost/interprocess/managed_shared_memory.hpp>
-#include <boost/interprocess/mapped_region.hpp>
-#include <boost/interprocess/shared_memory_object.hpp>
 #include <cuda_runtime.h>
 #include <cv_bridge/cv_bridge.h>
 #include <fstream>
@@ -26,24 +22,11 @@ static uint64_t output_size = 1 * 25200 * 85;   // default output size for YOLOv
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
 static int model_height = 640;
+static int model_size = 640 * 640;
 
 static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
-
-// Define an STL compatible allocator of floats that allocates from the managed_shared_memory.
-// This allocator will allow placing containers in the segment
-typedef boost::interprocess::allocator<float,
-                                       boost::interprocess::managed_shared_memory::segment_manager>
-    ShmemAllocatorFloat;
-typedef boost::interprocess::allocator<unsigned long,
-                                       boost::interprocess::managed_shared_memory::segment_manager>
-    ShmemAllocatorLong;
-
-// Alias a vector that uses the previous STL-like allocator so that allocates
-// its values from the segment
-typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
-typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
 void postprocessTRTdetections(std::vector<float> *model_output,
                               rocket_tracker::detectionMSG *detection) {
@@ -108,12 +91,9 @@ void postprocessTRTdetections(std::vector<float> *model_output,
     }
 }
 
-void processImage(float *image, double *cudaTime, double *pstTime,
-                  rocket_tracker::detectionMSG *detection) {
+void processImage(double *cudaTime, double *pstTime, rocket_tracker::detectionMSG *detection) {
 
     unsigned long time0 = ros::Time::now().toNSec();
-    float *pFloat = static_cast<float *>(buffers[inputIndex]);
-    std::copy(image, image + input_size, pFloat);
 
     // Invoke asynchronous inference
     context->enqueueV2(buffers, 0, nullptr);
@@ -134,12 +114,12 @@ void processImage(float *image, double *cudaTime, double *pstTime,
 }
 
 void handleNewFrame(unsigned long frameID, unsigned long frameStamp, unsigned long preTimeFG,
-                    float *image, int droppedFrames) {
+                    int droppedFrames) {
     rocket_tracker::detectionMSG detection;
     double cudaTime, pstTime;
 
     // do the actual image processing
-    processImage(image, &cudaTime, &pstTime, &detection);
+    processImage(&cudaTime, &pstTime, &detection);
     detection.timestamp = ros::Time::now();
     detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
     detection.frameID = frameID;
@@ -206,7 +186,10 @@ void inferRandomMats(int iterations) {
         inputArray.resize(1 * 3 * model_width * model_height);
         generate(inputArray.begin(), inputArray.end(), std::rand);
         inputArray.resize(1 * 3 * model_width * model_height);
-        processImage(&inputArray[0], &cudaTime, &pstTime, &detection);
+        float *pFloat = static_cast<float *>(buffers[inputIndex]);
+        std::copy(&inputArray[0], &inputArray[0] + input_size, pFloat);
+
+        processImage(&cudaTime, &pstTime, &detection);
         totalCuda += cudaTime;
         totalPst += pstTime;
     }
@@ -219,6 +202,44 @@ void inferRandomMats(int iterations) {
     ROS_INFO("Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [CUDA: %.2lf PST: "
              "%.2lf])",
              iterations, total, avgtotal, avgCuda, avgPst);
+}
+
+void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
+    static unsigned long lastFrameID = 0;
+    unsigned long frameID = msg->header.seq;
+    // check for dropped frames
+    int droppedFrames = 0;
+    if (frameID - lastFrameID > 1) {
+        droppedFrames = frameID - lastFrameID;
+        if (!PERF_TEST)
+            ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
+                     frameID);
+    }
+    lastFrameID = frameID;
+
+    ros::Time time0 = ros::Time::now();
+
+    cv::Mat img = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
+
+    // only resize down
+    if (img.rows > model_height || img.cols > model_width) {
+        cv::resize(img, img, cv::Size(model_width, model_height));
+    }
+
+    // prepare input buffers
+    float *pFloat = static_cast<float *>(buffers[inputIndex]);
+    // forEach is significantly faster than all other methods to traverse over the cv::Mat
+    img.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+        // p[0-2] contains bgr data, position[0-1] the row-column location
+        // Incoming data is BGR, so convert to RGB in the process
+        int index = model_height * position[0] + position[1];
+        pFloat[index] = p[2] / 255.0f;
+        pFloat[model_size + index] = p[1] / 255.0f;
+        pFloat[2 * model_size + index] = p[0] / 255.0f;
+    });
+
+    handleNewFrame(frameID, msg->header.stamp.toNSec(), ros::Time::now().toNSec() - time0.toNSec(),
+                   droppedFrames);
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -316,6 +337,7 @@ bool initializeTRT(std::string enginePath) {
              model_height);
     ros::param::set("/rocket_tracker/model_width", model_width);
     ros::param::set("/rocket_tracker/model_height", model_height);
+    model_size = model_width * model_height;
     return true;
 }
 
@@ -348,70 +370,24 @@ int main(int argc, char **argv) {
         return 0;
     }
     ROS_INFO("TRT initialized");
-
-    // Create a new shared memory segment with given name and size. Size is a little bit larger to
-    // have some buffer
-    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
-    boost::interprocess::managed_shared_memory segment(
-        boost::interprocess::create_only, "rocket_tracker_shared_memory",
-        input_size * sizeof(float) + 256 * sizeof(unsigned long));
-
-    // Initialize shared memory STL-compatible allocator
-    const ShmemAllocatorFloat alloc_inst_float(segment.get_segment_manager());
-    const ShmemAllocatorLong alloc_inst_long(segment.get_segment_manager());
-
-    // Construct vectors for the image data in shared memory
-    FloatVector *img_vector = segment.construct<FloatVector>("img_vector")(alloc_inst_float);
-    LongVector *notification_vector =
-        segment.construct<LongVector>("notification_vector")(alloc_inst_long);
-
-    // resize both vectors
-    img_vector->resize(input_size);
-    notification_vector->resize(3);
-
     ros::param::set("/rocket_tracker/trt_ready", true);
-    ROS_INFO("Shared Memory Registered");
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(100);
+
+    // Creating image-transport subscriber
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber subimg = it.subscribe("/image_topic", 1, &callbackFrameGrabber);
 
     // Create ros publisher
     detectionPublisher = nh.advertise<rocket_tracker::detectionMSG>("/detection", 1);
 
-    // Frame IDs
-    unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
-    unsigned long frameID;
-
-    // Main loop. There are no subscribers, so spinning is not required
-    while (ros::ok()) {
-
-        // check memory for new data
-        if (notification_vector->at(0) != lastFrameID) {
-
-            frameID = notification_vector->at(0);
-
-            // check for dropped frames
-            int droppedFrames = 0;
-            if (frameID - lastFrameID > 1) {
-                droppedFrames = frameID - lastFrameID;
-                if (!PERF_TEST)
-                    ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
-                             frameID);
-            }
-            lastFrameID = frameID;
-
-            // handle everything
-            handleNewFrame(notification_vector->at(0), notification_vector->at(1),
-                           notification_vector->at(2), &(*img_vector)[0], droppedFrames);
-        }
-    }
+    // Main loop
+    ros::spin();
 
     // Shut everything down cleanly
     for (int i = 0; i < numEngineBindings; i++) {
         cudaFreeHost(buffers[i]);
     }
-    segment.destroy<FloatVector>("img_vector");
-    segment.destroy<LongVector>("notification_vector");
-    boost::interprocess::shared_memory_object::remove("rocket_tracker_shared_memory");
     ros::shutdown();
     detectionPublisher.shutdown();
     nh.shutdown();

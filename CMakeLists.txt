@@ -30,10 +30,6 @@ else()
   include(${QT_USE_FILE})
 endif()
 
-# Boost
-find_package(Boost REQUIRED COMPONENTS system)
-MESSAGE(STATUS "BOOST VARS: ${Boost_INCLUDE_DIRS} ${Boost_LIBRARIES}")
-
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -187,7 +183,6 @@ include_directories(
   ${OpenCV_INCLUDE_DIRS}
   ${Qt5Widgets_INCLUDE_DIRS}
   ${CUDA_INCLUDE_DIRS}
-  ${Boost_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -248,8 +243,6 @@ foreach(NODE_NAME ${NODE_LIST})
     ${OpenCV_LIBRARIES}
     ${TENSORRT_LIBRARY}
     ${CUDA_LIBRARIES}
-    ${Boost_LIBRARIES}
-    rt
   )
 
   if("${qt_gui_cpp_USE_QT_MAJOR_VERSION} " STREQUAL "5 ")

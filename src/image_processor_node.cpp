@@ -142,6 +142,60 @@ void processImage(float *image, double *cudaTime, double *pstTime,
     *cudaTime = (time1 - time0) / 1000000.0;
 }
 
+void handleNewFrame(unsigned long frameID, unsigned long frameStamp, unsigned long preTimeFG,
+                    float *image, int droppedFrames) {
+    rocket_tracker::detectionMSG detection;
+    double cudaTime, pstTime;
+
+    processImage(image, &cudaTime, &pstTime, &detection);
+    detection.timestamp = ros::Time::now();
+    detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
+    detection.frameID = frameID;
+    detectionPublisher.publish(detection);
+    // check for missed frames
+
+    // Time logging statistics
+    if (TIME_LOGGING)
+        ROS_INFO("Total detection time: %.2f [PRE: %.2lf CUDA: %.2f PST: %.2f]",
+                 detection.processingTime, preTimeFG / 1000000.0, cudaTime, pstTime);
+
+    // FPS avg calculation
+    if (PERF_TEST) {
+        static int iterationcounter = 0;
+        static int totalDroppedFrames = 0;
+        static double avgLatency = 0, avg_pre = 0, avg_cuda = 0, avg_pst = 0;
+        static ros::Time throughputTimer = ros::Time::now();
+        avgLatency += detection.processingTime;
+        avg_pre += preTimeFG / 1000000.0;
+        avg_cuda += cudaTime;
+        avg_pst += pstTime;
+        totalDroppedFrames += droppedFrames;
+        iterationcounter++;
+        if (iterationcounter >= 1000) {
+            avgLatency /= 1000.0;
+            avg_pre /= 1000.0;
+            avg_cuda /= 1000.0;
+            avg_pst /= 1000.0;
+            double throughput =
+                1000.0 * 1000.0 /
+                ((ros::Time::now().toNSec() - throughputTimer.toNSec()) / 1000000.0);
+
+            ROS_INFO("Results of performance measurement after 1000 frames:\nAVG Latency: "
+                     "%.2fms [PRE: %.2f CUDA: %.2f PST: %.2f] Throughput: %.1fFPS Dropped "
+                     "Frames: %d",
+                     avgLatency, avg_pre, avg_cuda, avg_pst, throughput, totalDroppedFrames);
+
+            avgLatency = 0;
+            iterationcounter = 0;
+            avg_pre = 0.0;
+            avg_cuda = 0.0;
+            avg_pst = 0.0;
+            totalDroppedFrames = 0;
+            throughputTimer = ros::Time::now();
+        }
+    }
+}
+
 void inferRandomMats(int iterations) {
     // Infers random matrices over n iterations
     if (iterations <= 0)
@@ -304,25 +358,14 @@ int main(int argc, char **argv) {
 
     // All inference variables
     unsigned long lastFrameID = 0; // the first frame will be skipped, which is intentional
-    unsigned long frameID, frameStamp, preTimeFG;
-    double cudaTime, pstTime;
-    rocket_tracker::detectionMSG detection;
-    ros::Time throughputTimer = ros::Time::now();
+    unsigned long frameID;
 
     // Main loop. There are no subscribers, so spinning is not required
     while (ros::ok()) {
         // check memory for new data
         if (notification_vector->at(0) != lastFrameID) {
-            // process new image
             frameID = notification_vector->at(0);
-            frameStamp = notification_vector->at(1);
-            preTimeFG = notification_vector->at(2);
-            processImage(&(*img_vector)[0], &cudaTime, &pstTime, &detection);
-            detection.timestamp = ros::Time::now();
-            detection.processingTime = (detection.timestamp.toNSec() - frameStamp) / 1000000.0;
-            detection.frameID = frameID;
-            detectionPublisher.publish(detection);
-            // check for missed frames
+            // check for dropped frames
             int droppedFrames = 0;
             if (frameID - lastFrameID > 1) {
                 droppedFrames = frameID - lastFrameID;
@@ -332,46 +375,8 @@ int main(int argc, char **argv) {
             }
             lastFrameID = frameID;
 
-            // Time logging statistics
-            if (TIME_LOGGING)
-                ROS_INFO("Total detection time: %.2f [PRE: %.2lf CUDA: %.2f PST: %.2f]",
-                         detection.processingTime, preTimeFG / 1000000.0, cudaTime, pstTime);
-
-            // FPS avg calculation
-            if (PERF_TEST) {
-                static int iterationcounter = 0;
-                static int totalDroppedFrames = 0;
-                static double avgLatency = 0, avg_pre = 0, avg_cuda = 0, avg_pst = 0;
-                avgLatency += detection.processingTime;
-                avg_pre += preTimeFG / 1000000.0;
-                avg_cuda += cudaTime;
-                avg_pst += pstTime;
-                totalDroppedFrames += droppedFrames;
-                iterationcounter++;
-                if (iterationcounter >= 1000) {
-                    avgLatency /= 1000.0;
-                    avg_pre /= 1000.0;
-                    avg_cuda /= 1000.0;
-                    avg_pst /= 1000.0;
-                    double throughput =
-                        1000.0 * 1000.0 /
-                        ((ros::Time::now().toNSec() - throughputTimer.toNSec()) / 1000000.0);
-
-                    ROS_INFO("Results of performance measurement after 1000 frames:\nAVG Latency: "
-                             "%.2fms [PRE: %.2f CUDA: %.2f PST: %.2f] Throughput: %.1fFPS Dropped "
-                             "Frames: %d",
-                             avgLatency, avg_pre, avg_cuda, avg_pst, throughput,
-                             totalDroppedFrames);
-
-                    avgLatency = 0;
-                    iterationcounter = 0;
-                    avg_pre = 0.0;
-                    avg_cuda = 0.0;
-                    avg_pst = 0.0;
-                    totalDroppedFrames = 0;
-                    throughputTimer = ros::Time::now();
-                }
-            }
+            handleNewFrame(notification_vector->at(0), notification_vector->at(1),
+                           notification_vector->at(2), &(*img_vector)[0], droppedFrames);
         }
     }
 

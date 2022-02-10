@@ -19,6 +19,7 @@ static void **buffers;
 static nvinfer1::IExecutionContext *context;
 static int32_t inputIndex = 0;
 static int32_t outputIndex = 4;
+static int32_t numEngineBindings = 5;
 static uint64_t input_size = 1 * 3 * 640 * 640; // default input size for YOLOv5
 static uint64_t output_size = 1 * 25200 * 85;   // default output size for YOLOv5
 
@@ -233,35 +234,12 @@ class Logger : public nvinfer1::ILogger {
     }
 } logger;
 
-int main(int argc, char **argv) {
-
-    ros::init(argc, argv, "IMAGEPROCESSOR");
-    ros::NodeHandle nh("~");
-
-    // Get weightfile path from arguments
-    std::string weightfilepath;
-    if (argc == 2) {
-        weightfilepath = argv[1];
-    } else {
-        ROS_ERROR("Invalid number of argument passed to image processor.");
-        ros::shutdown();
-        return 0;
-    }
-
-    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
-    ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
-    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
-    if (PERF_TEST) {
-        ros::param::set("rocket_tracker/fg_fps_target", 50);
-        ROS_INFO("Performance test enabled. Frame-drop warnings are suppressed.");
-    }
-
-    // TensorRT
+bool initializeTRT(std::string enginePath) {
     ROS_INFO("Initializing TRT");
     long size;
     char *trtModelStream;
-    std::ifstream file(weightfilepath, std::ios::binary);
-    ROS_INFO("Loading engine from %s", weightfilepath.c_str());
+    std::ifstream file(enginePath, std::ios::binary);
+    ROS_INFO("Loading engine from %s", enginePath.c_str());
     if (file.good()) {
         file.seekg(0, file.end);
         size = file.tellg();
@@ -270,6 +248,9 @@ int main(int argc, char **argv) {
         assert(trtModelStream);
         file.read(trtModelStream, size);
         file.close();
+    } else {
+        ROS_ERROR("Could not load engine file.");
+        return false;
     }
 
     // Create runtime, deserialize engine and create execution context
@@ -284,9 +265,10 @@ int main(int argc, char **argv) {
     // Allocate memory for every engine binding, and gather input & output information
     inputIndex = engine->getBindingIndex("images");
     outputIndex = engine->getBindingIndex("output");
+    numEngineBindings = engine->getNbBindings();
     ROS_INFO("Reading engine bindings:");
-    buffers = new void *[engine->getNbBindings()];
-    for (int i = 0; i < engine->getNbBindings(); i++) {
+    buffers = new void *[numEngineBindings];
+    for (int i = 0; i < numEngineBindings; i++) {
 
         std::string dimension_desc = " [";
         size_t size = 1;
@@ -303,7 +285,7 @@ int main(int argc, char **argv) {
             ROS_WARN("Failed to allocate pinned memory! Switching to pageable memory instead.");
             if (cudaMalloc(&buffers[i], binding_size) != cudaSuccess) {
                 ROS_ERROR("Could not allocate cuda memory.");
-                return 0;
+                return false;
             }
         }
 
@@ -327,13 +309,45 @@ int main(int argc, char **argv) {
         engine->getBindingDataType(outputIndex) != nvinfer1::DataType::kFLOAT) {
         ROS_WARN("Engine input and/or output datatype is not float. Please change to a different "
                  "engine");
+        return false;
     }
 
     ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,
              model_height);
     ros::param::set("/rocket_tracker/model_width", model_width);
     ros::param::set("/rocket_tracker/model_height", model_height);
-    ros::param::set("/rocket_tracker/trt_ready", true);
+    return true;
+}
+
+int main(int argc, char **argv) {
+
+    ros::init(argc, argv, "IMAGEPROCESSOR");
+    ros::NodeHandle nh("~");
+
+    // Get weightfile path from arguments
+    std::string enginePath;
+    if (argc == 2) {
+        enginePath = argv[1];
+    } else {
+        ROS_ERROR("Invalid number of argument passed to image processor.");
+        ros::shutdown();
+        return 0;
+    }
+
+    ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+    ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
+    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
+    if (PERF_TEST) {
+        ros::param::set("rocket_tracker/fg_fps_target", 50);
+        ROS_INFO("Performance test enabled. Frame-drop warnings are suppressed.");
+    }
+
+    // TensorRT
+    if (!initializeTRT(enginePath)) {
+        ROS_ERROR("Failed to initialize TensorRT. Shutting down image processor");
+        return 0;
+    }
+    ROS_INFO("TRT initialized");
 
     // Create a new shared memory segment with given name and size. Size is a little bit larger to
     // have some buffer
@@ -355,7 +369,8 @@ int main(int argc, char **argv) {
     img_vector->resize(input_size);
     notification_vector->resize(3);
 
-    ROS_INFO("TRT initialized");
+    ros::param::set("/rocket_tracker/trt_ready", true);
+    ROS_INFO("Shared Memory Registered");
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(100);
 
@@ -391,7 +406,7 @@ int main(int argc, char **argv) {
     }
 
     // Shut everything down cleanly
-    for (int i = 0; i < engine->getNbBindings(); i++) {
+    for (int i = 0; i < numEngineBindings; i++) {
         cudaFreeHost(buffers[i]);
     }
     segment.destroy<FloatVector>("img_vector");

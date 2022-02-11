@@ -37,8 +37,12 @@ int main(int argc, char **argv) {
         videopath = argv[1];
     }
     if (videopath == "") {
-        ros::param::param<std::string>("/rocket_tracker/videopath", videopath,
-                                       "/home/david/Downloads/silent_launches.mp4");
+        ros::param::get("/rocket_tracker/videopath", videopath);
+        if (videopath == "") {
+            ROS_ERROR("No video path provided through config or launch parameter!");
+            return 0;
+        }
+
     } else {
         ros::param::set("/rocket_tracker/videopath", videopath);
     }

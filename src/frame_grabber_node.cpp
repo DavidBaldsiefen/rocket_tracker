@@ -138,14 +138,16 @@ int main(int argc, char **argv) {
                 cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
             }
 
+            float *vector_pointer = &(*img_vector)[0];
+
             // forEach is significantly faster than all other methods to traverse over the cv::Mat
             videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
                 // p[0-2] contains bgr data, position[0-1] the row-column location
                 // Incoming data is BGR, so convert to RGB in the process
                 int index = model_height * position[0] + position[1];
-                img_vector->at(index) = p[2] / 255.0f;
-                img_vector->at(model_size + index) = p[1] / 255.0f;
-                img_vector->at(2 * model_size + index) = p[0] / 255.0f;
+                vector_pointer[index] = p[2] / 255.0f;
+                vector_pointer[model_size + index] = p[1] / 255.0f;
+                vector_pointer[2 * model_size + index] = p[0] / 255.0f;
             });
 
             // Notify the IP that a new image is in the shared memory space

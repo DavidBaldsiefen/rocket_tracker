@@ -1,8 +1,3 @@
-// TODOs:
-// catch exceptions in imageprocessor
-// rethink the ordering of resizing and drawing the detection marker
-// evaluate subscriber/publisher buffers
-
 #include "evaluator_gui.h"
 #include <image_transport/image_transport.h>
 #include <rocket_tracker/detectionMSG.h>

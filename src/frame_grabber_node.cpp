@@ -138,6 +138,8 @@ int main(int argc, char **argv) {
                 cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
             }
 
+            // using a pointer to the vector is significantly faster than calling img_vector->at for
+            // every iteration
             float *vector_pointer = &(*img_vector)[0];
 
             // forEach is significantly faster than all other methods to traverse over the cv::Mat

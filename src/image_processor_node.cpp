@@ -95,15 +95,17 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     }
 
     // Evaluate results
-    detection->propability = highest_conf;
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
-            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
+            ROS_INFO("Detected class %d with confidence %f", highest_conf_label, highest_conf);
+        detection->propability = highest_conf;
         detection->classID = highest_conf_label;
         detection->centerX = model_output[highest_conf_index];
         detection->centerY = model_output[highest_conf_index + 1];
         detection->width = model_output[highest_conf_index + 2];
         detection->height = model_output[highest_conf_index + 3];
+    } else {
+        detection->propability = 0.0;
     }
 }
 

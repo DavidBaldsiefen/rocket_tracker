@@ -24,6 +24,8 @@ typedef boost::interprocess::allocator<unsigned long,
 typedef boost::interprocess::vector<float, ShmemAllocatorFloat> FloatVector;
 typedef boost::interprocess::vector<unsigned long, ShmemAllocatorLong> LongVector;
 
+static FloatVector *img_vector;
+
 bool initCapture(std::string videopath) {
 
     // Open video file
@@ -38,6 +40,10 @@ bool initCapture(std::string videopath) {
     ros::param::set("/rocket_tracker/input_fps", capture.get(cv::CAP_PROP_FPS));
     ros::param::set("/rocket_tracker/input_width", capture.get(cv::CAP_PROP_FRAME_WIDTH));
     ros::param::set("/rocket_tracker/input_height", capture.get(cv::CAP_PROP_FRAME_HEIGHT));
+    // refill the img_vector with zeroes, to prevent artifacts from new images
+    if (img_vector != NULL) {
+        std::fill(img_vector->begin(), img_vector->end(), 0.0);
+    }
     return true;
 }
 
@@ -78,7 +84,6 @@ int main(int argc, char **argv) {
 
     // Shared memory pointers
     boost::interprocess::managed_shared_memory segment;
-    FloatVector *img_vector;
     LongVector *notification_vector;
 
     // Get & set frame grabber fps target

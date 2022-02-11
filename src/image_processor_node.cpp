@@ -28,8 +28,7 @@ static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 
-void postprocessTRTdetections(std::vector<float> *model_output,
-                              rocket_tracker::detectionMSG *detection) {
+void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
 
     // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
     unsigned long dimensions =
@@ -41,7 +40,7 @@ void postprocessTRTdetections(std::vector<float> *model_output,
     if (TRACE_LOGGING) {
         std::string outputstring = "";
         for (int i = 0; i < 6; i++) {
-            outputstring += std::to_string(model_output->at(i)) + " ";
+            outputstring += std::to_string(model_output[i]) + " ";
             if (i == 3 || i == 4) {
                 outputstring += "| ";
             }
@@ -53,7 +52,7 @@ void postprocessTRTdetections(std::vector<float> *model_output,
     int highest_conf_label = 0;
     float highest_conf = 0.4f; // confidence threshold is 40%
     for (int index = 0; index < output_size; index += dimensions) {
-        float confidence = model_output->at(index + confidenceIndex);
+        float confidence = model_output[index + confidenceIndex];
 
         // for multiple classes, combine the confidence with class confidences
         // for single class models, this step can be skipped
@@ -62,7 +61,7 @@ void postprocessTRTdetections(std::vector<float> *model_output,
                 continue;
             }
             for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-                float combined_conf = model_output->at(index + j) * confidence;
+                float combined_conf = model_output[index + j] * confidence;
                 if (combined_conf > highest_conf) {
                     highest_conf = combined_conf;
                     highest_conf_index = index;
@@ -84,10 +83,10 @@ void postprocessTRTdetections(std::vector<float> *model_output,
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
         detection->classID = highest_conf_label;
-        detection->centerX = model_output->at(highest_conf_index);
-        detection->centerY = model_output->at(highest_conf_index + 1);
-        detection->width = model_output->at(highest_conf_index + 2);
-        detection->height = model_output->at(highest_conf_index + 3);
+        detection->centerX = model_output[highest_conf_index];
+        detection->centerY = model_output[highest_conf_index + 1];
+        detection->width = model_output[highest_conf_index + 2];
+        detection->height = model_output[highest_conf_index + 3];
     }
 }
 
@@ -98,17 +97,15 @@ void processImage(double *cudaTime, double *pstTime, rocket_tracker::detectionMS
     // Invoke asynchronous inference
     context->enqueueV2(buffers, 0, nullptr);
 
-    float *pFloat2 = static_cast<float *>(buffers[outputIndex]);
+    float *output_buffer_pointer = static_cast<float *>(buffers[outputIndex]);
 
     // wait for inference to finish
     cudaStreamSynchronize(0);
 
-    std::vector<float> gpu_output(pFloat2, pFloat2 + output_size);
-
     unsigned long time1 = ros::Time::now().toNSec();
 
     // perform postprocessing & identify most confident detection
-    postprocessTRTdetections(&gpu_output, detection);
+    postprocessTRTdetections(output_buffer_pointer, detection);
 
     *pstTime = (ros::Time::now().toNSec() - time1) / 1000000.0;
     *cudaTime = (time1 - time0) / 1000000.0;

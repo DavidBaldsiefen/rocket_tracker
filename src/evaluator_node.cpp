@@ -9,7 +9,7 @@
 #include <ros/ros.h>
 
 static cv::Mat receivedFrame;
-static uint receivedFrameID;
+static unsigned long receivedFrameID;
 static std::vector<rocket_tracker::detectionMSG> receivedDetections;
 static Ui_Form *ui;
 static bool redrawGUI = false;
@@ -99,7 +99,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     if (!img->image.empty()) {
         receivedFrame = img->image;
         cv::cvtColor(receivedFrame, receivedFrame, cv::COLOR_BGR2RGB);
-        receivedFrameID = msg->header.seq;
+        receivedFrameID = std::stoul(msg->header.frame_id);
         redrawGUI = true;
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");

@@ -204,7 +204,7 @@ void inferRandomMats(int iterations) {
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     static unsigned long lastFrameID = 0;
-    unsigned long frameID = msg->header.seq;
+    unsigned long frameID = std::stoul(msg->header.frame_id);
     // check for dropped frames
     int droppedFrames = 0;
     if (frameID - lastFrameID > 1) {

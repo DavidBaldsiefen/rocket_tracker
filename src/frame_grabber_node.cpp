@@ -80,7 +80,7 @@ int main(int argc, char **argv) {
         // publish video frame for GUI
         msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", videoFrame).toImageMsg();
         msg->header.stamp = timestamp;
-        msg->header.seq = frame_id;
+        msg->header.frame_id = std::to_string(frame_id);
         pubimg.publish(msg);
         frame_id++;
 

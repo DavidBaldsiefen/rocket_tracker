@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>755</width>
+    <width>723</width>
     <height>548</height>
    </rect>
   </property>
@@ -112,7 +112,7 @@
        <item row="9" column="0" colspan="2">
         <widget class="QLabel" name="label_4">
          <property name="toolTip">
-          <string/>
+          <string>Average over last 64 values</string>
          </property>
          <property name="statusTip">
           <string/>
@@ -121,7 +121,7 @@
           <string/>
          </property>
          <property name="text">
-          <string>Theoretical avg FPS:</string>
+          <string>Avg. Latency</string>
          </property>
         </widget>
        </item>
@@ -135,18 +135,8 @@
          </property>
         </widget>
        </item>
-       <item row="10" column="0">
-        <widget class="QLabel" name="label_8">
-         <property name="toolTip">
-          <string>Limited by FG publishing rate</string>
-         </property>
-         <property name="text">
-          <string>Actual FPS:</string>
-         </property>
-        </widget>
-       </item>
        <item row="10" column="2">
-        <widget class="QLabel" name="ip_fps_actual">
+        <widget class="QLabel" name="ip_throughput">
          <property name="text">
           <string>000fps</string>
          </property>
@@ -156,26 +146,12 @@
         </widget>
        </item>
        <item row="9" column="2">
-        <widget class="QLabel" name="ip_fps_avg">
+        <widget class="QLabel" name="ip_latency_avg">
          <property name="text">
-          <string>000fps</string>
+          <string>0.00ms</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-         </property>
-        </widget>
-       </item>
-       <item row="7" column="0" colspan="2">
-        <widget class="QLabel" name="label_6">
-         <property name="text">
-          <string>Image Processing Time</string>
-         </property>
-        </widget>
-       </item>
-       <item row="8" column="0">
-        <widget class="QLabel" name="label_2">
-         <property name="text">
-          <string>Last Frame</string>
          </property>
         </widget>
        </item>
@@ -215,15 +191,45 @@
         </widget>
        </item>
        <item row="4" column="0" colspan="3">
-        <widget class="QCheckBox" name="ip_height_filter_cb">
+        <widget class="QCheckBox" name="sync_dets_and_images">
          <property name="enabled">
-          <bool>false</bool>
+          <bool>true</bool>
+         </property>
+         <property name="toolTip">
+          <string>Attempt syncing frames to detections</string>
          </property>
          <property name="text">
-          <string>Use highest rocket (enable NMS)</string>
+          <string>Sync Detections and Images</string>
          </property>
          <property name="tristate">
           <bool>false</bool>
+         </property>
+        </widget>
+       </item>
+       <item row="8" column="0" colspan="2">
+        <widget class="QLabel" name="label_2">
+         <property name="toolTip">
+          <string>Time between framecapture and IP publisher</string>
+         </property>
+         <property name="text">
+          <string>Latency</string>
+         </property>
+        </widget>
+       </item>
+       <item row="10" column="0" colspan="2">
+        <widget class="QLabel" name="label_8">
+         <property name="toolTip">
+          <string>Limited by FG publishing rate</string>
+         </property>
+         <property name="text">
+          <string>Throughput:</string>
+         </property>
+        </widget>
+       </item>
+       <item row="7" column="0" colspan="3">
+        <widget class="QLabel" name="label_6">
+         <property name="text">
+          <string>Image Processing Metrics</string>
          </property>
         </widget>
        </item>

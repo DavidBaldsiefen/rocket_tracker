@@ -10,8 +10,9 @@
 
 static cv::Mat receivedFrame;
 static uint receivedFrameID;
-static rocket_tracker::detectionMSG receivedDetection;
+static std::vector<rocket_tracker::detectionMSG> receivedDetections;
 static Ui_Form *ui;
+static bool redrawGUI = false;
 
 Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
     ui.setupUi(this);
@@ -21,7 +22,6 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
     std::string videopath;
     ros::param::get("/rocket_tracker/videopath", videopath);
     ui.videopath->setText(QString::fromStdString(videopath));
-    ros::param::set("rocket_tracker/use_highest_rocket", ui.ip_height_filter_cb->isChecked());
 
     QObject::connect(ui.applyBtn, &QAbstractButton::pressed, this, &Evaluator_GUI::on_applyBtn);
 }
@@ -29,48 +29,67 @@ Evaluator_GUI::Evaluator_GUI(QWidget *parent) : QWidget(parent) {
 void Evaluator_GUI::setImage(cv::Mat img) {
     if (!img.empty()) {
 
-        // Confidence threshold is applied in image processor, so draw everything
-        // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
-        if (receivedDetection.propability != 0.0) {
+        cv::Mat guiIMG =
+            img.clone(); // create deep copy to prevent drawing multiple times on the same frame
 
-            // OpenCV needs [leftX, topY, width, height] => rectangle based around top left corner
-            int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
-            int topY = receivedDetection.centerY - (receivedDetection.height / 2);
-            cv::Rect detectionRect =
-                cv::Rect(leftX, topY, receivedDetection.width, receivedDetection.height);
-
-            // the detection coordinates relate to the models coordinate system
-            // however, the iage might have been scaled down (upscaling does not happen)
-            int model_width = 640, model_height = 640;
-            ros::param::getCached("/rocket_tracker/model_width", model_width);
-            ros::param::getCached("/rocket_tracker/model_height", model_height);
-            if (img.cols > model_width || img.rows > model_height) {
-                detectionRect.x = img.cols * detectionRect.x / model_width;
-                detectionRect.y = img.rows * detectionRect.y / model_height;
+        if (receivedDetections.size() != 0) {
+            rocket_tracker::detectionMSG receivedDetection;
+            // The syncing of FrameID and detectionID can lead to nothing being drawn when FG >> IP
+            if (ui.sync_dets_and_images->isChecked()) {
+                // iterate backwards as the fitting detection is most likely somewhere towards the
+                // end
+                for (int i = (receivedDetections.size() - 1); i >= 0; i--) {
+                    if (receivedDetections[i].frameID == receivedFrameID) {
+                        receivedDetection = receivedDetections[i];
+                        break;
+                    }
+                }
+            } else {
+                receivedDetection = receivedDetections[receivedDetections.size() - 1];
             }
 
-            // draw rectangle to image
-            cv::rectangle(img, detectionRect, cv::Scalar(0, 255, 0));
+            // Confidence threshold is applied in image processor
+            if (receivedDetection.propability != 0.0) {
 
-            // note propability in GUI
-            std::string str = "Probability of detected object: " +
-                              std::to_string((int)(receivedDetection.propability * 100)) + "%";
-            ui.propability_label->setText(QString::fromStdString(str));
-        } else {
-            ui.propability_label->setText(QString("Probability of detected object: ---"));
+                // OpenCV needs [leftX, topY, width, height] => rectangle based around top left
+                // corner
+                int leftX = receivedDetection.centerX - (receivedDetection.width / 2);
+                int topY = receivedDetection.centerY - (receivedDetection.height / 2);
+                cv::Rect detectionRect =
+                    cv::Rect(leftX, topY, receivedDetection.width, receivedDetection.height);
+
+                // the detection coordinates relate to the models coordinate system
+                // however, the iage might have been scaled down (upscaling does not happen)
+                int model_width = 640, model_height = 640;
+                ros::param::getCached("/rocket_tracker/model_width", model_width);
+                ros::param::getCached("/rocket_tracker/model_height", model_height);
+                if (guiIMG.cols > model_width || guiIMG.rows > model_height) {
+                    detectionRect.x = guiIMG.cols * detectionRect.x / model_width;
+                    detectionRect.y = guiIMG.rows * detectionRect.y / model_height;
+                }
+
+                // draw rectangle to image
+                cv::rectangle(guiIMG, detectionRect, cv::Scalar(0, 255, 0));
+
+                // note propability in GUI
+                std::string str = "Probability of detected object: " +
+                                  std::to_string((int)(receivedDetection.propability * 100)) + "%";
+                ui.propability_label->setText(QString::fromStdString(str));
+            } else {
+                ui.propability_label->setText(QString("Probability of detected object: ---"));
+            }
         }
 
         // Push image to GUI
-        cv::resize(img, img, cv::Size(ui.imageLabel->width(), ui.imageLabel->height()));
+        cv::resize(guiIMG, guiIMG, cv::Size(ui.imageLabel->width(), ui.imageLabel->height()));
         ui.imageLabel->setPixmap(QPixmap::fromImage(
-            QImage(img.data, img.cols, img.rows, img.step, QImage::Format_RGB888)));
+            QImage(guiIMG.data, guiIMG.cols, guiIMG.rows, guiIMG.step, QImage::Format_RGB888)));
     }
 }
 
 void Evaluator_GUI::on_applyBtn() {
     ros::param::set("rocket_tracker/videopath", ui.videopath->text().toStdString());
     ros::param::set("rocket_tracker/fg_fps_target", ui.fg_fps_target->value());
-    ros::param::set("rocket_tracker/use_highest_rocket", ui.ip_height_filter_cb->isChecked());
     ROS_INFO("Applying new config");
 }
 
@@ -81,35 +100,42 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
         receivedFrame = img->image;
         cv::cvtColor(receivedFrame, receivedFrame, cv::COLOR_BGR2RGB);
         receivedFrameID = msg->header.seq;
+        redrawGUI = true;
     } else {
         ROS_WARN("Empty Frame received in image_processor_node::callbackFrameGrabber");
     }
 }
 
 void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
-    receivedDetection = msg;
+
+    // Buffer up to 64 detections
+    receivedDetections.push_back(msg);
+    if (receivedDetections.size() > 64) {
+        receivedDetections.erase(receivedDetections.begin());
+    }
 
     // Calculate and display statistics
     // Processing time
-    static double avgProcessingTime = 0.0;
     ui->ip_time->setText(QString::number(msg.processingTime, 'f', 2) + QString("ms"));
 
-    // theoretically possible avg. fps
-    static int avgCounter = 0;
-    avgProcessingTime += msg.processingTime;
-    avgCounter++;
-    if (avgCounter >= 10) {
-        ui->ip_fps_avg->setText(QString::number(10000.0 / avgProcessingTime, 'f', 0) +
-                                QString("fps"));
-        avgCounter = 0;
-        avgProcessingTime = 0.0;
+    // avg processing time
+    double avgProcessingTime = 0.0;
+    for (int i = 0; i < receivedDetections.size(); i++) {
+        avgProcessingTime += receivedDetections[i].processingTime;
     }
+    avgProcessingTime /= receivedDetections.size();
+    ui->ip_latency_avg->setText(QString::number(avgProcessingTime, 'f', 2) + QString("ms"));
 
-    // actual fps based on frequenc of incoming messages in IP
-    static ros::Time lastTimestamp = msg.timestamp;
-    double actualFPS = ((1000.0 / (msg.timestamp.toNSec() - lastTimestamp.toNSec()) / 1000000.0));
-    lastTimestamp = msg.timestamp;
-    ui->ip_fps_actual->setText(QString::number(actualFPS, 'f', 0) + QString("fps"));
+    // Throughput
+    unsigned long throughputNS =
+        receivedDetections[receivedDetections.size() - 1].timestamp.toNSec() -
+        receivedDetections[0].timestamp.toNSec();
+    double throughput = throughputNS / 1000000.0; // convert to ms
+    throughput /= receivedDetections.size();
+    throughput = 1000.0 / throughput; // convert to fps
+    ui->ip_throughput->setText(QString::number(throughput, 'f', 0) + QString("fps"));
+
+    redrawGUI = true;
 }
 
 void pushRosParamsToGui(Ui_Form *ui) {
@@ -145,7 +171,6 @@ int main(int argc, char **argv) {
 
     // Creating image_processor subscriber
     ros::Subscriber subIP = nh.subscribe("/detection", 1, &callbackImageProcessor);
-    receivedDetection.propability = 0.0;
 
     // start GUI
     QApplication app(argc, argv);
@@ -154,15 +179,18 @@ int main(int argc, char **argv) {
     gui.show();
 
     // Main Loop
-    ros::Rate r(100);
+    ros::Rate guiLoopRate(200);
     while (ros::ok()) {
         // Process GUI events
         app.processEvents();
         // Process ROS events
         ros::spinOnce();
-        gui.setImage(receivedFrame);
+        if (redrawGUI) {
+            gui.setImage(receivedFrame);
+            redrawGUI = false;
+        }
         pushRosParamsToGui(gui.getUi());
-        r.sleep();
+        guiLoopRate.sleep();
     }
 
     return 0;

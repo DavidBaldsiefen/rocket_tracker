@@ -27,6 +27,7 @@ static int model_size = 640 * 640;
 static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
+static int FPS_INCREMENT = 0;
 
 void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
 
@@ -162,6 +163,15 @@ void handleNewFrame(unsigned long frameID, unsigned long frameStamp, unsigned lo
             avg_cuda = 0.0;
             avg_pst = 0.0;
             totalDroppedFrames = 0;
+
+            // increment fps
+            if (FPS_INCREMENT > 0) {
+                int fps_target = 50;
+                ros::param::get("rocket_tracker/fg_fps_target", fps_target);
+                fps_target += FPS_INCREMENT;
+                ros::param::set("rocket_tracker/fg_fps_target", fps_target);
+            }
+
             throughputTimer = ros::Time::now();
         }
     }
@@ -357,8 +367,11 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
+    ros::param::get("rocket_tracker/fps_increment", FPS_INCREMENT);
     if (PERF_TEST) {
-        ROS_INFO("Performance test enabled. Frame-drop warnings are suppressed.");
+        ROS_INFO(
+            "Performance test enabled. Frame-drop warnings are suppressed. FPS increment set to %d",
+            FPS_INCREMENT);
     }
 
     // TensorRT

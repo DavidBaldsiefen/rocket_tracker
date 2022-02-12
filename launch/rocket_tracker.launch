@@ -9,10 +9,12 @@
     <arg name="logtime" default="false"/> # print timings to console
     <arg name="logtrace" default="false"/> # print additional trace to console
     <arg name="perftest" default="false"/> # perform performance test
+    <arg name="fps_increment" default="0"/> # increment fps during performance tests
 
     <param name="rocket_tracker/time_logging" value="$(arg logtime)" />
     <param name="rocket_tracker/trace_logging" value="$(arg logtrace)" />
     <param name="rocket_tracker/performance_test" value="$(arg perftest)" />
+    <param name="rocket_tracker/fps_increment" value="$(arg fps_increment)" />
     
     #Starting framegrabber node
     <node 

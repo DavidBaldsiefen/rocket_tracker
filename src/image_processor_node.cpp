@@ -358,7 +358,6 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
     if (PERF_TEST) {
-        ros::param::set("rocket_tracker/fg_fps_target", 50);
         ROS_INFO("Performance test enabled. Frame-drop warnings are suppressed.");
     }
 

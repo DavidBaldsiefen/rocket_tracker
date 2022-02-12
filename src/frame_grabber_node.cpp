@@ -65,9 +65,11 @@ int main(int argc, char **argv) {
     int target_fps;
     ros::param::param<int>("/rocket_tracker/fg_fps_target", target_fps, cv::CAP_PROP_FPS);
     ros::Rate r(target_fps); // Set loop rate for framegrabber
+    ROS_INFO("Framegrabber FPS target: %d", target_fps);
 
-    bool TIME_LOGGING;
+    bool TIME_LOGGING = false, PERF_TEST = false;
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
+    ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
 
     unsigned long frame_id = 0;
 
@@ -75,7 +77,10 @@ int main(int argc, char **argv) {
     while (ros::ok()) {
 
         if (!capture.read(videoFrame)) {
-            ROS_INFO("End of video reached - resetting to first frame.");
+            // Skip message during performance tests
+            if (!PERF_TEST) {
+                ROS_INFO("End of video reached - resetting to first frame.");
+            }
             capture.set(cv::CAP_PROP_POS_FRAMES, 0);
             continue;
         }
@@ -92,6 +97,7 @@ int main(int argc, char **argv) {
         static int new_target_fps = target_fps;
         if (ros::param::getCached("rocket_tracker/fg_fps_target", new_target_fps) &&
             (new_target_fps != target_fps)) {
+            ROS_INFO("New framegrabber FPS target: %d", new_target_fps);
             target_fps = new_target_fps;
             r = ros::Rate(target_fps);
         }

@@ -35,54 +35,7 @@ struct GridAndStride {
     int stride;
 };
 
-struct Object {
-    cv::Rect_<float> rect;
-    int label;
-    float prob;
-};
-
-static void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, float *feat_blob,
-                                     float prob_threshold, std::vector<Object> &objects) {
-
-    const int num_anchors = grid_strides.size();
-
-    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
-        const int grid0 = grid_strides[anchor_idx].grid0;
-        const int grid1 = grid_strides[anchor_idx].grid1;
-        const int stride = grid_strides[anchor_idx].stride;
-
-        const int basic_pos = anchor_idx * (80 + 5);
-
-        // yolox/models/yolo_head.py decode logic
-        float x_center = (feat_blob[basic_pos + 0] + grid0) * stride;
-        float y_center = (feat_blob[basic_pos + 1] + grid1) * stride;
-        float w = exp(feat_blob[basic_pos + 2]) * stride;
-        float h = exp(feat_blob[basic_pos + 3]) * stride;
-        float x0 = x_center - w * 0.5f;
-        float y0 = y_center - h * 0.5f;
-
-        float box_objectness = feat_blob[basic_pos + 4];
-        for (int class_idx = 0; class_idx < 80; class_idx++) {
-            float box_cls_score = feat_blob[basic_pos + 5 + class_idx];
-            float box_prob = box_objectness * box_cls_score;
-            if (box_prob > prob_threshold) {
-                Object obj;
-                obj.rect.x = x0;
-                obj.rect.y = y0;
-                obj.rect.width = w;
-                obj.rect.height = h;
-                obj.label = class_idx;
-                obj.prob = box_prob;
-
-                objects.push_back(obj);
-            }
-
-        } // class loop
-
-    } // point anchor loop
-}
-
-float *adaptOutputForYOLOX(float *original_output, int *yolox_output_size) {
+void adaptOutputForYOLOX(float *original_output) {
     std::vector<int> strides = {8, 16, 32};
     std::vector<GridAndStride> grid_strides;
     for (auto stride : strides) {
@@ -95,26 +48,25 @@ float *adaptOutputForYOLOX(float *original_output, int *yolox_output_size) {
         }
     }
 
-    std::vector<Object> proposals;
-    generate_yolox_proposals(grid_strides, original_output, 0.3, proposals);
+    const int num_anchors = grid_strides.size();
 
-    int stride = 5 + num_classes;
-    *yolox_output_size = proposals.size() * stride;
-    float *yolox_output = new float[*yolox_output_size];
-    for (int i = 0; i < proposals.size(); i++) {
-        cv::Point center_of_rect = (proposals[i].rect.br() + proposals[i].rect.tl()) * 0.5;
-        yolox_output[i * stride] = center_of_rect.x;
-        yolox_output[i * stride + 1] = center_of_rect.y;
-        yolox_output[i * stride + 2] = proposals[i].rect.width;
-        yolox_output[i * stride + 3] = proposals[i].rect.height;
-        yolox_output[i * stride + 4] = proposals[i].prob;
-        for (int j = 0; j < num_classes; j++) {
-            yolox_output[i * stride + 5 + j] = 0.0f;
-        }
-        yolox_output[i * stride + 5 + proposals[i].label] = 1.0f;
-    }
+    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
+        const int grid0 = grid_strides[anchor_idx].grid0;
+        const int grid1 = grid_strides[anchor_idx].grid1;
+        const int stride = grid_strides[anchor_idx].stride;
 
-    return yolox_output;
+        const int basic_pos = anchor_idx * (80 + 5);
+
+        // yolox/models/yolo_head.py decode logic
+        original_output[basic_pos + 0] += grid0;
+        original_output[basic_pos + 0] *= stride;
+        original_output[basic_pos + 1] += grid1;
+        original_output[basic_pos + 1] *= stride;
+        original_output[basic_pos + 2] = exp(original_output[basic_pos + 2]) * stride;
+        original_output[basic_pos + 3] = exp(original_output[basic_pos + 3]) * stride;
+        // propability is already in correct format, as are class scores
+
+    } // point anchor loop
 }
 
 void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
@@ -125,14 +77,13 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     const unsigned long confidenceIndex = 4;
     const unsigned long labelStartIndex = 5;
 
-    int yolox_output_size = 0;
-    float *yolox_output = adaptOutputForYOLOX(model_output, &yolox_output_size);
+    adaptOutputForYOLOX(model_output);
 
     // Trace-logging for debugging purposes
     if (TRACE_LOGGING) {
         std::string outputstring = "";
         for (int i = 0; i < 6; i++) {
-            outputstring += std::to_string(yolox_output[i]) + " ";
+            outputstring += std::to_string(model_output[i]) + " ";
             if (i == 3 || i == 4) {
                 outputstring += "| ";
             }
@@ -143,8 +94,8 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     int highest_conf_index = 0;
     int highest_conf_label = 0;
     float highest_conf = 0.4f; // confidence threshold is 40%
-    for (int index = 0; index < yolox_output_size; index += dimensions) {
-        float confidence = yolox_output[index + confidenceIndex];
+    for (int index = 0; index < output_size; index += dimensions) {
+        float confidence = model_output[index + confidenceIndex];
 
         // for multiple classes, combine the confidence with class confidences
         // for single class models, this step can be skipped
@@ -153,7 +104,7 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
                 continue;
             }
             for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-                float combined_conf = yolox_output[index + j] * confidence;
+                float combined_conf = model_output[index + j] * confidence;
                 if (combined_conf > highest_conf) {
                     highest_conf = combined_conf;
                     highest_conf_index = index;
@@ -175,10 +126,10 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
         detection->classID = highest_conf_label;
-        detection->centerX = yolox_output[highest_conf_index];
-        detection->centerY = yolox_output[highest_conf_index + 1];
-        detection->width = yolox_output[highest_conf_index + 2];
-        detection->height = yolox_output[highest_conf_index + 3];
+        detection->centerX = model_output[highest_conf_index];
+        detection->centerY = model_output[highest_conf_index + 1];
+        detection->width = model_output[highest_conf_index + 2];
+        detection->height = model_output[highest_conf_index + 3];
     }
 }
 

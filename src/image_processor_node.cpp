@@ -29,6 +29,59 @@ static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 static int FPS_INCREMENT = 0;
 
+struct GridAndStride {
+    int grid0;
+    int grid1;
+    int stride;
+};
+
+struct Object {
+    cv::Rect_<float> rect;
+    int label;
+    float prob;
+};
+
+static void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, float *feat_blob,
+                                     float prob_threshold, std::vector<Object> &objects) {
+
+    const int num_anchors = grid_strides.size();
+
+    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
+        const int grid0 = grid_strides[anchor_idx].grid0;
+        const int grid1 = grid_strides[anchor_idx].grid1;
+        const int stride = grid_strides[anchor_idx].stride;
+
+        const int basic_pos = anchor_idx * (80 + 5);
+
+        // yolox/models/yolo_head.py decode logic
+        float x_center = (feat_blob[basic_pos + 0] + grid0) * stride;
+        float y_center = (feat_blob[basic_pos + 1] + grid1) * stride;
+        float w = exp(feat_blob[basic_pos + 2]) * stride;
+        float h = exp(feat_blob[basic_pos + 3]) * stride;
+        float x0 = x_center - w * 0.5f;
+        float y0 = y_center - h * 0.5f;
+
+        float box_objectness = feat_blob[basic_pos + 4];
+        for (int class_idx = 0; class_idx < 80; class_idx++) {
+            float box_cls_score = feat_blob[basic_pos + 5 + class_idx];
+            float box_prob = box_objectness * box_cls_score;
+            if (box_prob > prob_threshold) {
+                Object obj;
+                obj.rect.x = x0;
+                obj.rect.y = y0;
+                obj.rect.width = w;
+                obj.rect.height = h;
+                obj.label = class_idx;
+                obj.prob = box_prob;
+
+                objects.push_back(obj);
+            }
+
+        } // class loop
+
+    } // point anchor loop
+}
+
 void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
 
     // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
@@ -49,32 +102,26 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
         ROS_INFO("%s", outputstring.c_str());
     }
 
-    int highest_conf_index = 0;
-    int highest_conf_label = 0;
-    float highest_conf = 0.4f; // confidence threshold is 40%
-    for (int index = 0; index < output_size; index += dimensions) {
-        float confidence = model_output[index + confidenceIndex];
+    std::vector<int> strides = {8, 16, 32};
+    std::vector<GridAndStride> grid_strides;
+    for (auto stride : strides) {
+        int num_grid_y = model_height / stride;
+        int num_grid_x = model_width / stride;
+        for (int g1 = 0; g1 < num_grid_y; g1++) {
+            for (int g0 = 0; g0 < num_grid_x; g0++) {
+                grid_strides.push_back((GridAndStride){g0, g1, stride});
+            }
+        }
+    }
 
-        // for multiple classes, combine the confidence with class confidences
-        // for single class models, this step can be skipped
-        if (num_classes > 1) {
-            if (confidence <= highest_conf) {
-                continue;
-            }
-            for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-                float combined_conf = model_output[index + j] * confidence;
-                if (combined_conf > highest_conf) {
-                    highest_conf = combined_conf;
-                    highest_conf_index = index;
-                    highest_conf_label = j - labelStartIndex;
-                }
-            }
-        } else {
-            if (confidence > highest_conf) {
-                highest_conf = confidence;
-                highest_conf_index = index;
-                highest_conf_label = 1;
-            }
+    std::vector<Object> proposals;
+    generate_yolox_proposals(grid_strides, model_output, 0.3, proposals);
+    int highest_conf_index = 0;
+    float highest_conf = 0.0f;
+    for (int i = 0; i < proposals.size(); i++) {
+        if (proposals[i].prob > highest_conf) {
+            highest_conf_index = i;
+            highest_conf = proposals[i].prob;
         }
     }
 
@@ -82,12 +129,17 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     detection->propability = highest_conf;
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
-            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
-        detection->classID = highest_conf_label;
-        detection->centerX = model_output[highest_conf_index];
-        detection->centerY = model_output[highest_conf_index + 1];
-        detection->width = model_output[highest_conf_index + 2];
-        detection->height = model_output[highest_conf_index + 3];
+            ROS_INFO("Detected class %d with confidence %lf", proposals[highest_conf_index].label,
+                     highest_conf);
+        cv::Point center_of_rect =
+            (proposals[highest_conf_index].rect.br() + proposals[highest_conf_index].rect.tl()) *
+            0.5;
+        detection->classID = proposals[highest_conf_index].label;
+        detection->centerX = center_of_rect.x;
+        detection->centerY = center_of_rect.y;
+        proposals[highest_conf_index].rect.y + proposals[highest_conf_index].rect.height / 2;
+        detection->width = proposals[highest_conf_index].rect.width;
+        detection->height = proposals[highest_conf_index].rect.height;
     }
 }
 
@@ -237,14 +289,21 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     // prepare input buffers
     float *pFloat = static_cast<float *>(buffers[inputIndex]);
     // forEach is significantly faster than all other methods to traverse over the cv::Mat
-    img.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
-        // p[0-2] contains bgr data, position[0-1] the row-column location
-        // Incoming data is BGR, so convert to RGB in the process
-        int index = model_height * position[0] + position[1];
-        pFloat[index] = p[2] / 255.0f;
-        pFloat[model_size + index] = p[1] / 255.0f;
-        pFloat[2 * model_size + index] = p[0] / 255.0f;
-    });
+    float *blob = new float[img.total() * 3];
+    int channels = 3;
+    int img_h = img.rows;
+    int img_w = img.cols;
+    for (size_t c = 0; c < channels; c++) {
+        for (size_t h = 0; h < img_h; h++) {
+            for (size_t w = 0; w < img_w; w++) {
+                blob[c * img_w * img_h + h * img_w + w] = (float)img.at<cv::Vec3b>(h, w)[c];
+            }
+        }
+    }
+
+    for (int i = 0; i < input_size; i++) {
+        pFloat[i] = blob[i];
+    }
 
     handleNewFrame(frameID, msg->header.stamp.toNSec(), ros::Time::now().toNSec() - time0.toNSec(),
                    droppedFrames);

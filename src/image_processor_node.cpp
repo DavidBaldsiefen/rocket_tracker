@@ -82,26 +82,7 @@ static void generate_yolox_proposals(std::vector<GridAndStride> grid_strides, fl
     } // point anchor loop
 }
 
-void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
-
-    // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
-    unsigned long dimensions =
-        5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
-    const unsigned long confidenceIndex = 4;
-    const unsigned long labelStartIndex = 5;
-
-    // Trace-logging for debugging purposes
-    if (TRACE_LOGGING) {
-        std::string outputstring = "";
-        for (int i = 0; i < 6; i++) {
-            outputstring += std::to_string(model_output[i]) + " ";
-            if (i == 3 || i == 4) {
-                outputstring += "| ";
-            }
-        }
-        ROS_INFO("%s", outputstring.c_str());
-    }
-
+float *adaptOutputForYOLOX(float *original_output, int *yolox_output_size) {
     std::vector<int> strides = {8, 16, 32};
     std::vector<GridAndStride> grid_strides;
     for (auto stride : strides) {
@@ -115,13 +96,76 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     }
 
     std::vector<Object> proposals;
-    generate_yolox_proposals(grid_strides, model_output, 0.3, proposals);
-    int highest_conf_index = 0;
-    float highest_conf = 0.0f;
+    generate_yolox_proposals(grid_strides, original_output, 0.3, proposals);
+
+    int stride = 5 + num_classes;
+    *yolox_output_size = proposals.size() * stride;
+    float *yolox_output = new float[*yolox_output_size];
     for (int i = 0; i < proposals.size(); i++) {
-        if (proposals[i].prob > highest_conf) {
-            highest_conf_index = i;
-            highest_conf = proposals[i].prob;
+        cv::Point center_of_rect = (proposals[i].rect.br() + proposals[i].rect.tl()) * 0.5;
+        yolox_output[i * stride] = center_of_rect.x;
+        yolox_output[i * stride + 1] = center_of_rect.y;
+        yolox_output[i * stride + 2] = proposals[i].rect.width;
+        yolox_output[i * stride + 3] = proposals[i].rect.height;
+        yolox_output[i * stride + 4] = proposals[i].prob;
+        for (int j = 0; j < num_classes; j++) {
+            yolox_output[i * stride + 5 + j] = 0.0f;
+        }
+        yolox_output[i * stride + 5 + proposals[i].label] = 1.0f;
+    }
+
+    return yolox_output;
+}
+
+void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
+
+    // inspired by https://github.com/ultralytics/yolov5/issues/708#issuecomment-674422178
+    unsigned long dimensions =
+        5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
+    const unsigned long confidenceIndex = 4;
+    const unsigned long labelStartIndex = 5;
+
+    int yolox_output_size = 0;
+    float *yolox_output = adaptOutputForYOLOX(model_output, &yolox_output_size);
+
+    // Trace-logging for debugging purposes
+    if (TRACE_LOGGING) {
+        std::string outputstring = "";
+        for (int i = 0; i < 6; i++) {
+            outputstring += std::to_string(yolox_output[i]) + " ";
+            if (i == 3 || i == 4) {
+                outputstring += "| ";
+            }
+        }
+        ROS_INFO("%s", outputstring.c_str());
+    }
+
+    int highest_conf_index = 0;
+    int highest_conf_label = 0;
+    float highest_conf = 0.4f; // confidence threshold is 40%
+    for (int index = 0; index < yolox_output_size; index += dimensions) {
+        float confidence = yolox_output[index + confidenceIndex];
+
+        // for multiple classes, combine the confidence with class confidences
+        // for single class models, this step can be skipped
+        if (num_classes > 1) {
+            if (confidence <= highest_conf) {
+                continue;
+            }
+            for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
+                float combined_conf = yolox_output[index + j] * confidence;
+                if (combined_conf > highest_conf) {
+                    highest_conf = combined_conf;
+                    highest_conf_index = index;
+                    highest_conf_label = j - labelStartIndex;
+                }
+            }
+        } else {
+            if (confidence > highest_conf) {
+                highest_conf = confidence;
+                highest_conf_index = index;
+                highest_conf_label = 1;
+            }
         }
     }
 
@@ -129,17 +173,12 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     detection->propability = highest_conf;
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
-            ROS_INFO("Detected class %d with confidence %lf", proposals[highest_conf_index].label,
-                     highest_conf);
-        cv::Point center_of_rect =
-            (proposals[highest_conf_index].rect.br() + proposals[highest_conf_index].rect.tl()) *
-            0.5;
-        detection->classID = proposals[highest_conf_index].label;
-        detection->centerX = center_of_rect.x;
-        detection->centerY = center_of_rect.y;
-        proposals[highest_conf_index].rect.y + proposals[highest_conf_index].rect.height / 2;
-        detection->width = proposals[highest_conf_index].rect.width;
-        detection->height = proposals[highest_conf_index].rect.height;
+            ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
+        detection->classID = highest_conf_label;
+        detection->centerX = yolox_output[highest_conf_index];
+        detection->centerY = yolox_output[highest_conf_index + 1];
+        detection->width = yolox_output[highest_conf_index + 2];
+        detection->height = yolox_output[highest_conf_index + 3];
     }
 }
 

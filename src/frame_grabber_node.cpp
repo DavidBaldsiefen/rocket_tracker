@@ -96,15 +96,20 @@ int main(int argc, char **argv) {
     ros::Rate r(target_fps); // Set loop rate for framegrabber
     ROS_INFO("Framegrabber FPS target: %d", target_fps);
 
-    bool TIME_LOGGING = false, PERF_TEST = false;
+    bool TIME_LOGGING = false, PERF_TEST = false, YOLOX_MODEL = false;
     ros::param::get("/rocket_tracker/time_logging", TIME_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
+    ros::param::get("rocket_tracker/yolox_model", YOLOX_MODEL);
 
     bool TRT_ready = false;
     int model_width = 640;
     int model_height = 640;
     int model_size = 640 * 640;
     int trt_initialized = false;
+    float input_float_divisor = 255.0f;
+    if (YOLOX_MODEL) {
+        input_float_divisor = 1.0f;
+    }
 
     unsigned long frame_id = 0;
 
@@ -152,9 +157,9 @@ int main(int argc, char **argv) {
                 // p[0-2] contains bgr data, position[0-1] the row-column location
                 // Incoming data is BGR, so convert to RGB in the process
                 int index = model_height * position[0] + position[1];
-                vector_pointer[index] = p[2] / 255.0f;
-                vector_pointer[model_size + index] = p[1] / 255.0f;
-                vector_pointer[2 * model_size + index] = p[0] / 255.0f;
+                vector_pointer[index] = p[2] / input_float_divisor;
+                vector_pointer[model_size + index] = p[1] / input_float_divisor;
+                vector_pointer[2 * model_size + index] = p[0] / input_float_divisor;
             });
 
             // Notify the IP that a new image is in the shared memory space

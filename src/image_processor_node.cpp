@@ -30,6 +30,38 @@ static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 static int FPS_INCREMENT = 0;
+static bool YOLOX_MODEL = false;
+
+struct YOLOXGridAndStride {
+    int grid0;
+    int grid1;
+    int stride;
+};
+
+std::vector<YOLOXGridAndStride> yolox_grid_strides;
+
+void adaptOutputForYOLOX(float *original_output) {
+    // inspired by https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
+    const int num_anchors = yolox_grid_strides.size();
+
+    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
+        const int grid0 = yolox_grid_strides[anchor_idx].grid0;
+        const int grid1 = yolox_grid_strides[anchor_idx].grid1;
+        const int stride = yolox_grid_strides[anchor_idx].stride;
+
+        const int basic_pos = anchor_idx * (num_classes + 5);
+
+        // yolox/models/yolo_head.py decode logic
+        original_output[basic_pos + 0] += grid0;
+        original_output[basic_pos + 0] *= stride;
+        original_output[basic_pos + 1] += grid1;
+        original_output[basic_pos + 1] *= stride;
+        original_output[basic_pos + 2] = exp(original_output[basic_pos + 2]) * stride;
+        original_output[basic_pos + 3] = exp(original_output[basic_pos + 3]) * stride;
+        // propability is already in correct format, as are class scores
+
+    } // point anchor loop
+}
 
 // Define an STL compatible allocator of floats that allocates from the managed_shared_memory.
 // This allocator will allow placing containers in the segment
@@ -52,6 +84,10 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
     const unsigned long confidenceIndex = 4;
     const unsigned long labelStartIndex = 5;
+
+    if (YOLOX_MODEL) {
+        adaptOutputForYOLOX(model_output);
+    }
 
     // Trace-logging for debugging purposes
     if (TRACE_LOGGING) {
@@ -243,6 +279,20 @@ void inferRandomMats(int iterations) {
              iterations, total, avgtotal, avgPre, avgCuda, avgPst);
 }
 
+void initializeYOLOXGridAndStrides() {
+    // from https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
+    std::vector<int> strides = {8, 16, 32};
+    for (auto stride : strides) {
+        int num_grid_y = model_height / stride;
+        int num_grid_x = model_width / stride;
+        for (int g1 = 0; g1 < num_grid_y; g1++) {
+            for (int g0 = 0; g0 < num_grid_x; g0++) {
+                yolox_grid_strides.push_back((YOLOXGridAndStride){g0, g1, stride});
+            }
+        }
+    }
+}
+
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override {
 
@@ -360,6 +410,7 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
     ros::param::get("rocket_tracker/fps_increment", FPS_INCREMENT);
+    ros::param::get("rocket_tracker/yolox_model", YOLOX_MODEL);
     if (PERF_TEST) {
         ROS_INFO(
             "Performance test enabled. Frame-drop warnings are suppressed. FPS increment set to %d",
@@ -372,6 +423,11 @@ int main(int argc, char **argv) {
         return 0;
     }
     ROS_INFO("TRT initialized");
+
+    if (YOLOX_MODEL) {
+        initializeYOLOXGridAndStrides();
+        ROS_INFO("Initializing for YOLOX model.");
+    }
 
     // Create a new shared memory segment with given name and size. Size is a little bit larger to
     // have some buffer

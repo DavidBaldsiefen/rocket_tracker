@@ -288,6 +288,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 }
 
 void initializeYOLOXGridAndStrides() {
+    // from https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
     std::vector<int> strides = {8, 16, 32};
     for (auto stride : strides) {
         int num_grid_y = model_height / stride;

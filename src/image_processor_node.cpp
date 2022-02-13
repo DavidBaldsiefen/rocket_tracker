@@ -29,31 +29,21 @@ static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 static int FPS_INCREMENT = 0;
 
-struct GridAndStride {
+struct YOLOXGridAndStride {
     int grid0;
     int grid1;
     int stride;
 };
 
-void adaptOutputForYOLOX(float *original_output) {
-    std::vector<int> strides = {8, 16, 32};
-    std::vector<GridAndStride> grid_strides;
-    for (auto stride : strides) {
-        int num_grid_y = model_height / stride;
-        int num_grid_x = model_width / stride;
-        for (int g1 = 0; g1 < num_grid_y; g1++) {
-            for (int g0 = 0; g0 < num_grid_x; g0++) {
-                grid_strides.push_back((GridAndStride){g0, g1, stride});
-            }
-        }
-    }
+std::vector<YOLOXGridAndStride> yolox_grid_strides;
 
-    const int num_anchors = grid_strides.size();
+void adaptOutputForYOLOX(float *original_output) {
+    const int num_anchors = yolox_grid_strides.size();
 
     for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
-        const int grid0 = grid_strides[anchor_idx].grid0;
-        const int grid1 = grid_strides[anchor_idx].grid1;
-        const int stride = grid_strides[anchor_idx].stride;
+        const int grid0 = yolox_grid_strides[anchor_idx].grid0;
+        const int grid1 = yolox_grid_strides[anchor_idx].grid1;
+        const int stride = yolox_grid_strides[anchor_idx].stride;
 
         const int basic_pos = anchor_idx * (80 + 5);
 
@@ -292,6 +282,19 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
                    droppedFrames);
 }
 
+void initializeYOLOXGridAndStrides() {
+    std::vector<int> strides = {8, 16, 32};
+    for (auto stride : strides) {
+        int num_grid_y = model_height / stride;
+        int num_grid_x = model_width / stride;
+        for (int g1 = 0; g1 < num_grid_y; g1++) {
+            for (int g0 = 0; g0 < num_grid_x; g0++) {
+                yolox_grid_strides.push_back((YOLOXGridAndStride){g0, g1, stride});
+            }
+        }
+    }
+}
+
 class Logger : public nvinfer1::ILogger {
     void log(Severity severity, const char *msg) noexcept override {
 
@@ -422,6 +425,9 @@ int main(int argc, char **argv) {
         return 0;
     }
     ROS_INFO("TRT initialized");
+
+    initializeYOLOXGridAndStrides();
+
     ros::param::set("/rocket_tracker/trt_ready", true);
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(100);

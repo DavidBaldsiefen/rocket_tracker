@@ -18,6 +18,7 @@ static int32_t outputIndex = 4;
 static int32_t numEngineBindings = 5;
 static uint64_t input_size = 1 * 3 * 640 * 640; // default input size for YOLOv5
 static uint64_t output_size = 1 * 25200 * 85;   // default output size for YOLOv5
+static float input_float_divisor = 255.0f;
 
 static int num_classes = 80; // COCO class count
 static int model_width = 640;
@@ -28,6 +29,38 @@ static bool TIME_LOGGING = false;
 static bool TRACE_LOGGING = false;
 static bool PERF_TEST = false;
 static int FPS_INCREMENT = 0;
+static bool YOLOX_MODEL = false;
+
+struct YOLOXGridAndStride {
+    int grid0;
+    int grid1;
+    int stride;
+};
+
+std::vector<YOLOXGridAndStride> yolox_grid_strides;
+
+void adaptOutputForYOLOX(float *original_output) {
+    // inspired by https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
+    const int num_anchors = yolox_grid_strides.size();
+
+    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
+        const int grid0 = yolox_grid_strides[anchor_idx].grid0;
+        const int grid1 = yolox_grid_strides[anchor_idx].grid1;
+        const int stride = yolox_grid_strides[anchor_idx].stride;
+
+        const int basic_pos = anchor_idx * (num_classes + 5);
+
+        // yolox/models/yolo_head.py decode logic
+        original_output[basic_pos + 0] += grid0;
+        original_output[basic_pos + 0] *= stride;
+        original_output[basic_pos + 1] += grid1;
+        original_output[basic_pos + 1] *= stride;
+        original_output[basic_pos + 2] = exp(original_output[basic_pos + 2]) * stride;
+        original_output[basic_pos + 3] = exp(original_output[basic_pos + 3]) * stride;
+        // propability is already in correct format, as are class scores
+
+    } // point anchor loop
+}
 
 void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
 
@@ -36,6 +69,10 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
     const unsigned long confidenceIndex = 4;
     const unsigned long labelStartIndex = 5;
+
+    if (YOLOX_MODEL) {
+        adaptOutputForYOLOX(model_output);
+    }
 
     // Trace-logging for debugging purposes
     if (TRACE_LOGGING) {
@@ -241,13 +278,27 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
         // p[0-2] contains bgr data, position[0-1] the row-column location
         // Incoming data is BGR, so convert to RGB in the process
         int index = model_height * position[0] + position[1];
-        pFloat[index] = p[2] / 255.0f;
-        pFloat[model_size + index] = p[1] / 255.0f;
-        pFloat[2 * model_size + index] = p[0] / 255.0f;
+        pFloat[index] = p[2] / input_float_divisor;
+        pFloat[model_size + index] = p[1] / input_float_divisor;
+        pFloat[2 * model_size + index] = p[0] / input_float_divisor;
     });
 
     handleNewFrame(frameID, msg->header.stamp.toNSec(), ros::Time::now().toNSec() - time0.toNSec(),
                    droppedFrames);
+}
+
+void initializeYOLOXGridAndStrides() {
+    // from https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
+    std::vector<int> strides = {8, 16, 32};
+    for (auto stride : strides) {
+        int num_grid_y = model_height / stride;
+        int num_grid_x = model_width / stride;
+        for (int g1 = 0; g1 < num_grid_y; g1++) {
+            for (int g0 = 0; g0 < num_grid_x; g0++) {
+                yolox_grid_strides.push_back((YOLOXGridAndStride){g0, g1, stride});
+            }
+        }
+    }
 }
 
 class Logger : public nvinfer1::ILogger {
@@ -368,6 +419,7 @@ int main(int argc, char **argv) {
     ros::param::get("/rocket_tracker/trace_logging", TRACE_LOGGING);
     ros::param::get("/rocket_tracker/performance_test", PERF_TEST);
     ros::param::get("rocket_tracker/fps_increment", FPS_INCREMENT);
+    ros::param::get("rocket_tracker/yolox_model", YOLOX_MODEL);
     if (PERF_TEST) {
         ROS_INFO(
             "Performance test enabled. Frame-drop warnings are suppressed. FPS increment set to %d",
@@ -380,6 +432,13 @@ int main(int argc, char **argv) {
         return 0;
     }
     ROS_INFO("TRT initialized");
+
+    if (YOLOX_MODEL) {
+        initializeYOLOXGridAndStrides();
+        input_float_divisor = 1.0f;
+        ROS_INFO("Initializing for YOLOX model.");
+    }
+
     ros::param::set("/rocket_tracker/trt_ready", true);
     ROS_INFO("Warming up over 100 iterations with random mats");
     inferRandomMats(100);

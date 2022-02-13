@@ -289,21 +289,14 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     // prepare input buffers
     float *pFloat = static_cast<float *>(buffers[inputIndex]);
     // forEach is significantly faster than all other methods to traverse over the cv::Mat
-    float *blob = new float[img.total() * 3];
-    int channels = 3;
-    int img_h = img.rows;
-    int img_w = img.cols;
-    for (size_t c = 0; c < channels; c++) {
-        for (size_t h = 0; h < img_h; h++) {
-            for (size_t w = 0; w < img_w; w++) {
-                blob[c * img_w * img_h + h * img_w + w] = (float)img.at<cv::Vec3b>(h, w)[c];
-            }
-        }
-    }
-
-    for (int i = 0; i < input_size; i++) {
-        pFloat[i] = blob[i];
-    }
+    img.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+        // p[0-2] contains bgr data, position[0-1] the row-column location
+        // Incoming data is BGR, so convert to RGB in the process
+        int index = model_height * position[0] + position[1];
+        pFloat[index] = p[2];                  // / 255.0f;
+        pFloat[model_size + index] = p[1];     // / 255.0f;
+        pFloat[2 * model_size + index] = p[0]; // / 255.0f;
+    });
 
     handleNewFrame(frameID, msg->header.stamp.toNSec(), ros::Time::now().toNSec() - time0.toNSec(),
                    droppedFrames);

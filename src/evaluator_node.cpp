@@ -134,20 +134,30 @@ void callbackImageProcessor(const rocket_tracker::detectionMSG &msg) {
 }
 
 void pushRosParamsToGui(Ui_Form *ui) {
-    double input_fps, input_width, input_height, rescaled_width, rescaled_height;
+    double input_fps;
+    int input_width = 1, input_height = 1, model_width = 1, model_height = 1;
     bool trtReady = false;
     bool retVal = false;
     retVal |= ros::param::get("/rocket_tracker/input_fps", input_fps);
     retVal |= ros::param::get("/rocket_tracker/input_width", input_width);
     retVal |= ros::param::get("/rocket_tracker/input_height", input_height);
     retVal |= ros::param::get("/rocket_tracker/trt_ready", trtReady);
-    retVal |= ros::param::get("/rocket_tracker/model_width", rescaled_width);
-    retVal |= ros::param::get("/rocket_tracker/model_height", rescaled_height);
+    retVal |= ros::param::get("/rocket_tracker/model_width", model_width);
+    retVal |= ros::param::get("/rocket_tracker/model_height", model_height);
     if (retVal) {
+        double aspectRatio = (double)input_width / (double)input_height;
+        int resizedWidth = model_width, resizedHeight = model_height;
+        if (input_height > model_height || input_width > model_width) {
+            if (input_height > input_width) {
+                resizedWidth = (double)model_width * aspectRatio;
+            } else {
+                resizedHeight = (double)model_height / aspectRatio;
+            }
+        }
         std::string str = "Input Video: " + std::to_string((int)input_width) + "x" +
                           std::to_string((int)input_height) + "@" + std::to_string((int)input_fps) +
-                          "fps => rescaled to " + std::to_string((int)rescaled_width) + "x" +
-                          std::to_string((int)rescaled_height);
+                          "fps => rescaled to " + std::to_string((int)resizedWidth) + "x" +
+                          std::to_string((int)resizedHeight);
         ui->video_details->setText(QString::fromStdString(str));
         str = "Engine Ready: " + std::string(trtReady ? "Yes" : "No");
         ui->trt_label->setText(QString::fromStdString(str));

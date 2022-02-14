@@ -271,7 +271,14 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
 
     // only resize down
     if (img.rows > model_height || img.cols > model_width) {
-        cv::resize(img, img, cv::Size(model_width, model_height));
+        float aspectRatio = (float)img.cols / img.rows;
+        if (img.rows > img.cols) {
+            // height > width
+            cv::resize(img, img, cv::Size(model_width * aspectRatio, model_height));
+        } else {
+            // width > height
+            cv::resize(img, img, cv::Size(model_width, model_height / aspectRatio));
+        }
     }
 
     // prepare input buffers
@@ -393,6 +400,12 @@ bool initializeTRT(std::string enginePath) {
         ROS_WARN("Engine input and/or output datatype is not float. Please change to a different "
                  "engine");
         return false;
+    }
+
+    // intialize input Buffer with zeroes
+    float *pFloat = static_cast<float *>(buffers[inputIndex]);
+    for (int i = 0; i < input_size; i++) {
+        pFloat[i] = 0.0f;
     }
 
     ROS_INFO("Loaded model with %d classes and input size %dx%d", num_classes, model_width,

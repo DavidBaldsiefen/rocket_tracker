@@ -105,6 +105,14 @@ int main(int argc, char **argv) {
         if (ros::param::getCached("rocket_tracker/videopath", new_videopath) &&
             (new_videopath != videopath)) {
             capture.release();
+
+            // Send a short black frame to the IP to make sure that the input buffer is reset to 0
+            // for all floats
+            cv::Mat blackFrame(videoFrame.rows, videoFrame.cols, CV_8UC3, cv::Scalar(0, 0, 0));
+            msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", blackFrame).toImageMsg();
+            msg->header.stamp = timestamp;
+            msg->header.frame_id = std::to_string(frame_id);
+            pubimg.publish(msg);
             if (initCapture(new_videopath)) {
                 videopath = new_videopath;
             } else {

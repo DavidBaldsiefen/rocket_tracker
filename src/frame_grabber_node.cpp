@@ -9,6 +9,7 @@
 #include <ros/ros.h>
 
 static cv::VideoCapture capture;
+static double aspectRatio;
 
 // Define an STL compatible allocator of floats that allocates from the managed_shared_memory.
 // This allocator will allow placing containers in the segment
@@ -40,6 +41,7 @@ bool initCapture(std::string videopath) {
     ros::param::set("/rocket_tracker/input_fps", capture.get(cv::CAP_PROP_FPS));
     ros::param::set("/rocket_tracker/input_width", capture.get(cv::CAP_PROP_FRAME_WIDTH));
     ros::param::set("/rocket_tracker/input_height", capture.get(cv::CAP_PROP_FRAME_HEIGHT));
+    aspectRatio = capture.get(cv::CAP_PROP_FRAME_WIDTH) / capture.get(cv::CAP_PROP_FRAME_HEIGHT);
     // refill the img_vector with zeroes, to prevent artifacts from new images
     if (img_vector != NULL) {
         std::fill(img_vector->begin(), img_vector->end(), 0.0);
@@ -143,9 +145,17 @@ int main(int argc, char **argv) {
 
         // perform preprocessing
         if (trt_initialized) {
-            // only resize down
+            // only resize down, and maintain aspect ratio
             if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
-                cv::resize(videoFrame, videoFrame, cv::Size(model_width, model_height));
+                if (videoFrame.rows > videoFrame.cols) {
+                    // height > width
+                    cv::resize(videoFrame, videoFrame,
+                               cv::Size(model_width * aspectRatio, model_height));
+                } else {
+                    // width > height
+                    cv::resize(videoFrame, videoFrame,
+                               cv::Size(model_width, model_height / aspectRatio));
+                }
             }
 
             // using a pointer to the vector is significantly faster than calling img_vector->at for

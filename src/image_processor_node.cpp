@@ -37,30 +37,7 @@ struct YOLOXGridAndStride {
     int stride;
 };
 
-std::vector<YOLOXGridAndStride> yolox_grid_strides;
-
-void adaptOutputForYOLOX(float *original_output) {
-    // inspired by https://github.com/Megvii-BaseDetection/YOLOX/tree/main/demo/TensorRT/cpp
-    const int num_anchors = yolox_grid_strides.size();
-
-    for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
-        const int grid0 = yolox_grid_strides[anchor_idx].grid0;
-        const int grid1 = yolox_grid_strides[anchor_idx].grid1;
-        const int stride = yolox_grid_strides[anchor_idx].stride;
-
-        const int basic_pos = anchor_idx * (num_classes + 5);
-
-        // yolox/models/yolo_head.py decode logic
-        original_output[basic_pos + 0] += grid0;
-        original_output[basic_pos + 0] *= stride;
-        original_output[basic_pos + 1] += grid1;
-        original_output[basic_pos + 1] *= stride;
-        original_output[basic_pos + 2] = exp(original_output[basic_pos + 2]) * stride;
-        original_output[basic_pos + 3] = exp(original_output[basic_pos + 3]) * stride;
-        // propability is already in correct format, as are class scores
-
-    } // point anchor loop
-}
+static std::vector<YOLOXGridAndStride> yolox_grid_strides;
 
 void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG *detection) {
 
@@ -69,10 +46,6 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
         5 + num_classes; // 0,1,2,3 ->box,4->confidence，5-85 -> coco classes confidence
     const unsigned long confidenceIndex = 4;
     const unsigned long labelStartIndex = 5;
-
-    if (YOLOX_MODEL) {
-        adaptOutputForYOLOX(model_output);
-    }
 
     // Trace-logging for debugging purposes
     if (TRACE_LOGGING) {
@@ -116,16 +89,27 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     }
 
     // Evaluate results
-
     if (highest_conf > 0.4f) {
         if (TRACE_LOGGING)
             ROS_INFO("Detected class %d with confidence %lf", highest_conf_label, highest_conf);
         detection->propability = highest_conf;
         detection->classID = highest_conf_label;
-        detection->centerX = model_output[highest_conf_index];
-        detection->centerY = model_output[highest_conf_index + 1];
-        detection->width = model_output[highest_conf_index + 2];
-        detection->height = model_output[highest_conf_index + 3];
+
+        if (YOLOX_MODEL) {
+            const int grid0 = yolox_grid_strides[highest_conf_index / dimensions].grid0;
+            const int grid1 = yolox_grid_strides[highest_conf_index / dimensions].grid1;
+            const int stride = yolox_grid_strides[highest_conf_index / dimensions].stride;
+
+            detection->centerX = (model_output[highest_conf_index + 0] + grid0) * stride;
+            detection->centerY = (model_output[highest_conf_index + 1] + grid1) * stride;
+            detection->width = exp(model_output[highest_conf_index + 2]) * stride;
+            detection->height = exp(model_output[highest_conf_index + 3]) * stride;
+        } else {
+            detection->centerX = model_output[highest_conf_index];
+            detection->centerY = model_output[highest_conf_index + 1];
+            detection->width = model_output[highest_conf_index + 2];
+            detection->height = model_output[highest_conf_index + 3];
+        }
     } else {
         detection->propability = 0.0;
     }

@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
     if (YOLOX_MODEL) {
         input_float_divisor = 1.0f;
     }
+    cv::Mat scaledIMG; // Mat scaled to model size
 
     unsigned long frame_id = 0;
 
@@ -132,6 +133,8 @@ int main(int argc, char **argv) {
             ros::param::get("rocket_tracker/model_width", model_width);
             ros::param::get("rocket_tracker/model_height", model_height);
             model_size = model_width * model_height;
+            scaledIMG = videoFrame.clone();
+            cv::resize(scaledIMG, scaledIMG, cv::Size(model_width, model_height));
 
             // initialize shared memory segment and access shared vectors
             segment = boost::interprocess::managed_shared_memory(boost::interprocess::open_only,
@@ -149,13 +152,15 @@ int main(int argc, char **argv) {
             if (videoFrame.rows > model_height || videoFrame.cols > model_width) {
                 if (videoFrame.rows > videoFrame.cols) {
                     // height > width
-                    cv::resize(videoFrame, videoFrame,
-                               cv::Size(model_width * aspectRatio, model_height));
+                    cv::resize(videoFrame, scaledIMG,
+                               cv::Size((float)model_width * aspectRatio, model_height));
                 } else {
                     // width > height
-                    cv::resize(videoFrame, videoFrame,
-                               cv::Size(model_width, model_height / aspectRatio));
+                    cv::resize(videoFrame, scaledIMG,
+                               cv::Size((float)model_width, model_height / aspectRatio));
                 }
+            } else {
+                scaledIMG = videoFrame;
             }
 
             // using a pointer to the vector is significantly faster than calling img_vector->at for
@@ -163,7 +168,7 @@ int main(int argc, char **argv) {
             float *vector_pointer = &(*img_vector)[0];
 
             // forEach is significantly faster than all other methods to traverse over the cv::Mat
-            videoFrame.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
+            scaledIMG.forEach<cv::Vec3b>([&](cv::Vec3b &p, const int *position) -> void {
                 // p[0-2] contains bgr data, position[0-1] the row-column location
                 // Incoming data is BGR, so convert to RGB in the process
                 int index = model_height * position[0] + position[1];

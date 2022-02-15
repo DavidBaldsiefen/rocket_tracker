@@ -59,8 +59,23 @@ void Evaluator_GUI::setImage(cv::Mat img) {
                 ros::param::getCached("/rocket_tracker/model_width", model_width);
                 ros::param::getCached("/rocket_tracker/model_height", model_height);
                 if (guiIMG.cols > model_width || guiIMG.rows > model_height) {
-                    detectionRect.x = guiIMG.cols * detectionRect.x / model_width;
-                    detectionRect.y = guiIMG.rows * detectionRect.y / model_height;
+                    float aspect_ratio = (float)guiIMG.cols / guiIMG.rows;
+                    // the image was resized while maintaining aspect ratio
+                    float inputWidth = img.cols;
+                    float inputHeight = img.rows;
+                    if (inputWidth > inputHeight) {
+                        inputHeight = model_height / aspect_ratio;
+                        inputWidth = model_width;
+                    } else {
+                        inputWidth = model_width * aspect_ratio;
+                        inputHeight = model_height;
+                    }
+
+                    detectionRect.x = detectionRect.x * guiIMG.cols / inputWidth;
+                    detectionRect.y = detectionRect.y * guiIMG.rows / inputHeight;
+
+                    detectionRect.width *= guiIMG.cols / inputWidth;
+                    detectionRect.height *= guiIMG.rows / inputHeight;
                 }
 
                 // draw rectangle to image

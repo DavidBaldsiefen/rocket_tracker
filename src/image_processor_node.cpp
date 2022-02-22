@@ -78,25 +78,19 @@ void postprocessTRTdetections(float *model_output, rocket_tracker::detectionMSG 
     int highest_conf_label = 0;
     float highest_conf = 0.4f; // confidence threshold is 40%
     for (int index = 0; index < output_size; index += dimensions) {
-        float confidence = model_output[index + confidenceIndex];
-
         // for multiple classes, combine the confidence with class confidences
         // for single class models, this step can be skipped
         if (num_classes > 1) {
-            if (confidence <= highest_conf) {
-                continue;
-            }
             for (unsigned long j = labelStartIndex; j < dimensions; ++j) {
-                float combined_conf = model_output[index + j] * confidence;
-                if (combined_conf > highest_conf) {
-                    highest_conf = combined_conf;
+                if (model_output[index + j] > highest_conf) {
+                    highest_conf = model_output[index + j];
                     highest_conf_index = index;
                     highest_conf_label = j - labelStartIndex;
                 }
             }
         } else {
-            if (confidence > highest_conf) {
-                highest_conf = confidence;
+            if (model_output[index + confidenceIndex] > highest_conf) {
+                highest_conf = model_output[index + confidenceIndex];
                 highest_conf_index = index;
                 highest_conf_label = 1;
             }

@@ -236,7 +236,7 @@ void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
     // check for dropped frames
     int droppedFrames = 0;
     if (frameID - lastFrameID > 1) {
-        droppedFrames = frameID - lastFrameID;
+        droppedFrames = frameID - lastFrameID - 1;
         if (!PERF_TEST)
             ROS_WARN("Frame dropped from FG->IP: jumped from index %lu to %lu", lastFrameID,
                      frameID);

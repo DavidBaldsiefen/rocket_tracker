@@ -39,10 +39,12 @@ The following launch arguments are available:
 
 ## Information about the TensorRT engine
 
-In general, any explicitly single batch TensorRT engine with 3-channel input bindings can be fed into the software. E.g. the input bindings could look like this: [1x3x640x640]. The software will automatically scale down the image if necessary. The software supports FP32 and FP16 engines, provided that the input and output channels are in FP32 precision.
+In general, any explicitly single batch TensorRT engine with 3-channel input bindings can be fed into the software. E.g. the input bindings could look like this: [1x3x640x640]. The software will automatically scale down the image if necessary. The software supports FP32 and FP16 engines, provided that the input and output channels are in FP32 precision. It is highly recommended to serialize the engine on the same computer/setup that it will also be executed on!
 
 However, the engine is currently only able to interpret any output that equals the YOLOv5 format. Specifically, this means that each detections is in the format [x, y, width, height, box_confidence, class_confidence_1, class_confidence_2, ....]. The model is able to identify the number of classes automatically.
 
 In addition, the software is able to interpret the YOLOX model output scheme, provided it was started with the `yolox_model:=true` launch argument.
 
-For single-class engines, the software will always choose the detection with the highest box_confidence. For multi-class engines, the box_confidence will be multiplied with each class_confidence to get the final value.
+For single-class engines, the software will always choose the detection with the highest box_confidence. For multi-class engines, each class confidence value is evaluated.
+
+**To create a YOLOv5 TensorRT engine**, use the YOLOv5s [export.py](https://github.com/ultralytics/yolov5/blob/master/export.py), e.g. `python3 export.py --weights my_weights.pt --include engine --device 0`. Alternatively, `trtexec` may also be used.

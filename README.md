@@ -14,3 +14,16 @@ Both branches are otherwise identical. Installation instructions can be found in
 ### Performance Measurements on an NVIDIA Jetson AGX Xavier
 
 ![Performance Measurements](https://github.com/DavidBaldsiefen/rocket_tracker/blob/main/thesis-results.png)
+### Reproducing the Performance Measurements
+
+To reproduce these results, check out and install one of the two branches above.
+
+Afterwards, download the [weights](https://github.com/DavidBaldsiefen/rocket_tracker/releases/download/v0.1/rocket-weights.pt) and [test-video](https://github.com/DavidBaldsiefen/rocket_tracker/releases/download/v0.1/rocket-video.mp4) which were used in the performance measurements. To convert the weights to TensorRT, clone the official [YOLOv5 repository](https://github.com/ultralytics/yolov5) and use their `export.py`:
+
+    python export.py --weights path/to/rocket-weights.pt --include engine --device 0
+
+Afterwards, make sure that the NVIDIA Jetson runs in `MAXN` power mode with `jetson_clocks` enabled, and then initiate the performance test using the following command:
+
+`roslaunch rocket_tracker headless_tracker.launch weights:="path/to/rocket-weights.engine" video:="path/to/test-video.mp4" perftest:=True`
+
+Performance measurements will be printed to the console every 1000 frames. The results above were obtained based on the 3rd console printout.

@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
         segment.construct<LongVector>("notification_vector")(alloc_inst_long);
 
     // resize both vectors
-    img_vector->resize(input_size);
+    img_vector->resize(input_size, 0.0f);
     notification_vector->resize(3);
 
     ros::param::set("/rocket_tracker/trt_ready", true);

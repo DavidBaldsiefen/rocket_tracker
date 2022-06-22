@@ -228,6 +228,12 @@ void inferRandomMats(int iterations) {
     ROS_INFO("Performing inference for %d iterations took %.2lf ms. (Avg: %.2lf [CUDA: %.2lf PST: "
              "%.2lf])",
              iterations, total, avgtotal, avgCuda, avgPst);
+    
+    // reset input buffer
+    float *pFloat = static_cast<float *>(buffers[inputIndex]);
+    for (int i = 0; i < input_size; i++) {
+        pFloat[i] = 0.0f;
+    }
 }
 
 void callbackFrameGrabber(const sensor_msgs::ImageConstPtr &msg) {
